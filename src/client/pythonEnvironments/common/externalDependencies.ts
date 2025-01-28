@@ -1,12 +1,12 @@
 // Copyright (c) Microsoft Corporation. All rights reserved.
 // Licensed under the MIT License.
 
-import * as fsapi from 'fs-extra';
 import * as path from 'path';
 import * as vscode from 'vscode';
+import * as fsapi from '../../common/platform/fs-paths';
 import { IWorkspaceService } from '../../common/application/types';
 import { ExecutionResult, IProcessServiceFactory, ShellOptions, SpawnOptions } from '../../common/process/types';
-import { IDisposable, IConfigurationService } from '../../common/types';
+import { IDisposable, IConfigurationService, IExperimentService } from '../../common/types';
 import { chain, iterable } from '../../common/utils/async';
 import { getOSType, OSType } from '../../common/utils/platform';
 import { IServiceContainer } from '../../ioc/types';
@@ -20,13 +20,26 @@ export function initializeExternalDependencies(serviceContainer: IServiceContain
 // processes
 
 export async function shellExecute(command: string, options: ShellOptions = {}): Promise<ExecutionResult<string>> {
+    const useWorker = false;
     const service = await internalServiceContainer.get<IProcessServiceFactory>(IProcessServiceFactory).create();
+    options = { ...options, useWorker };
     return service.shellExec(command, options);
 }
 
-export async function exec(file: string, args: string[], options: SpawnOptions = {}): Promise<ExecutionResult<string>> {
+export async function exec(
+    file: string,
+    args: string[],
+    options: SpawnOptions = {},
+    useWorker = false,
+): Promise<ExecutionResult<string>> {
     const service = await internalServiceContainer.get<IProcessServiceFactory>(IProcessServiceFactory).create();
+    options = { ...options, useWorker };
     return service.exec(file, args, options);
+}
+
+export function inExperiment(experimentName: string): boolean {
+    const service = internalServiceContainer.get<IExperimentService>(IExperimentService);
+    return service.inExperimentSync(experimentName);
 }
 
 // Workspace
@@ -53,9 +66,6 @@ export function readFile(filePath: string): Promise<string> {
 export function readFileSync(filePath: string): string {
     return fsapi.readFileSync(filePath, 'utf-8');
 }
-
-// eslint-disable-next-line global-require
-export const untildify: (value: string) => string = require('untildify');
 
 /**
  * Returns true if given file path exists within the given parent directory, false otherwise.
@@ -148,7 +158,7 @@ export async function* getSubDirs(
     root: string,
     options?: { resolveSymlinks?: boolean },
 ): AsyncIterableIterator<string> {
-    const dirContents = await fsapi.promises.readdir(root, { withFileTypes: true });
+    const dirContents = await fsapi.readdir(root, { withFileTypes: true });
     const generators = dirContents.map((item) => {
         async function* generator() {
             const fullPath = path.join(root, item.name);
@@ -175,8 +185,9 @@ export async function* getSubDirs(
  * Returns the value for setting `python.<name>`.
  * @param name The name of the setting.
  */
-export function getPythonSetting<T>(name: string): T | undefined {
-    const settings = internalServiceContainer.get<IConfigurationService>(IConfigurationService).getSettings();
+export function getPythonSetting<T>(name: string, root?: string): T | undefined {
+    const resource = root ? vscode.Uri.file(root) : undefined;
+    const settings = internalServiceContainer.get<IConfigurationService>(IConfigurationService).getSettings(resource);
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     return (settings as any)[name];
 }
@@ -186,9 +197,10 @@ export function getPythonSetting<T>(name: string): T | undefined {
  * @param name The name of the setting.
  * @param callback The listener function to be called when the setting changes.
  */
-export function onDidChangePythonSetting(name: string, callback: () => void): IDisposable {
+export function onDidChangePythonSetting(name: string, callback: () => void, root?: string): IDisposable {
     return vscode.workspace.onDidChangeConfiguration((event: vscode.ConfigurationChangeEvent) => {
-        if (event.affectsConfiguration(`python.${name}`)) {
+        const scope = root ? vscode.Uri.file(root) : undefined;
+        if (event.affectsConfiguration(`python.${name}`, scope)) {
             callback();
         }
     });

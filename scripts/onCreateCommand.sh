@@ -12,21 +12,22 @@ command -v pyenv >/dev/null || export PATH="$PYENV_ROOT/bin:$PATH"
 source ~/.bashrc
 
 # Install Python via pyenv .
-pyenv install 3.7:latest 3.8:latest 3.9:latest 3.10:latest 3.11:latest
+pyenv install 3.8.18 3.9:latest 3.10:latest 3.11:latest
 
-# Set default Python version to 3.7 .
-pyenv global 3.7.17
+# Set default Python version to 3.8 .
+pyenv global 3.8.18
 
 npm ci
 
 # Create Virutal environment.
-pyenv exec python3.7 -m venv .venv
+pyenv exec python -m venv .venv
 
 # Activate Virtual environment.
 source /workspaces/vscode-python/.venv/bin/activate
 
 # Install required Python libraries.
-npx gulp installPythonLibs
+/workspaces/vscode-python/.venv/bin/python -m pip install nox
+nox --session install_python_libs
 
 /workspaces/vscode-python/.venv/bin/python -m pip install -r build/test-requirements.txt
 /workspaces/vscode-python/.venv/bin/python -m pip install -r build/functional-test-requirements.txt

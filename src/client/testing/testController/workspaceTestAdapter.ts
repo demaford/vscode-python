@@ -2,7 +2,7 @@
 // Licensed under the MIT License.
 
 import * as util from 'util';
-import { CancellationToken, TestController, TestItem, TestRun, Uri } from 'vscode';
+import { CancellationToken, TestController, TestItem, TestRun, TestRunProfileKind, Uri } from 'vscode';
 import { createDeferred, Deferred } from '../../common/utils/async';
 import { Testing } from '../../common/utils/localize';
 import { traceError } from '../../logging';
@@ -14,6 +14,7 @@ import { ITestDiscoveryAdapter, ITestExecutionAdapter, ITestResultResolver } fro
 import { IPythonExecutionFactory } from '../../common/process/types';
 import { ITestDebugLauncher } from '../common/types';
 import { buildErrorNodeOptions } from './common/utils';
+import { PythonEnvironment } from '../../pythonEnvironments/info';
 
 /**
  * This class exposes a test-provider-agnostic way of discovering tests.
@@ -34,7 +35,7 @@ export class WorkspaceTestAdapter {
         private discoveryAdapter: ITestDiscoveryAdapter,
         private executionAdapter: ITestExecutionAdapter,
         private workspaceUri: Uri,
-        private resultResolver: ITestResultResolver,
+        public resultResolver: ITestResultResolver,
     ) {}
 
     public async executeTests(
@@ -42,11 +43,13 @@ export class WorkspaceTestAdapter {
         runInstance: TestRun,
         includes: TestItem[],
         token?: CancellationToken,
-        debugBool?: boolean,
+        profileKind?: boolean | TestRunProfileKind,
         executionFactory?: IPythonExecutionFactory,
         debugLauncher?: ITestDebugLauncher,
+        interpreter?: PythonEnvironment,
     ): Promise<void> {
         if (this.executing) {
+            traceError('Test execution already in progress, not starting a new one.');
             return this.executing.promise;
         }
 
@@ -75,13 +78,14 @@ export class WorkspaceTestAdapter {
                 await this.executionAdapter.runTests(
                     this.workspaceUri,
                     testCaseIds,
-                    debugBool,
+                    profileKind,
                     runInstance,
                     executionFactory,
                     debugLauncher,
+                    interpreter,
                 );
             } else {
-                await this.executionAdapter.runTests(this.workspaceUri, testCaseIds, debugBool);
+                await this.executionAdapter.runTests(this.workspaceUri, testCaseIds, profileKind);
             }
             deferred.resolve();
         } catch (ex) {
@@ -114,11 +118,13 @@ export class WorkspaceTestAdapter {
         testController: TestController,
         token?: CancellationToken,
         executionFactory?: IPythonExecutionFactory,
+        interpreter?: PythonEnvironment,
     ): Promise<void> {
         sendTelemetryEvent(EventName.UNITTEST_DISCOVERING, undefined, { tool: this.testProvider });
 
         // Discovery is expensive. If it is already running, use the existing promise.
         if (this.discovering) {
+            traceError('Test discovery already in progress, not starting a new one.');
             return this.discovering.promise;
         }
 
@@ -128,7 +134,7 @@ export class WorkspaceTestAdapter {
         try {
             // ** execution factory only defined for new rewrite way
             if (executionFactory !== undefined) {
-                await this.discoveryAdapter.discoverTests(this.workspaceUri, executionFactory);
+                await this.discoveryAdapter.discoverTests(this.workspaceUri, executionFactory, token, interpreter);
             } else {
                 await this.discoveryAdapter.discoverTests(this.workspaceUri);
             }
@@ -143,7 +149,7 @@ export class WorkspaceTestAdapter {
                 cancel = token?.isCancellationRequested ? Testing.cancelPytestDiscovery : Testing.errorPytestDiscovery;
             }
 
-            traceError(`${cancel}\r\n`, ex);
+            traceError(`${cancel} for workspace: ${this.workspaceUri} \r\n`, ex);
 
             // Report also on the test view.
             const message = util.format(`${cancel} ${Testing.seePythonOutput}\r\n`, ex);
@@ -160,5 +166,14 @@ export class WorkspaceTestAdapter {
 
         sendTelemetryEvent(EventName.UNITTEST_DISCOVERY_DONE, undefined, { tool: this.testProvider, failed: false });
         return Promise.resolve();
+    }
+
+    /**
+     * Retrieves the current test provider instance.
+     *
+     * @returns {TestProvider} The instance of the test provider.
+     */
+    public getTestProvider(): TestProvider {
+        return this.testProvider;
     }
 }

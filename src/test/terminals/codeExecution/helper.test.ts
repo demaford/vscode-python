@@ -4,12 +4,14 @@
 'use strict';
 
 import { expect } from 'chai';
-import * as fs from 'fs-extra';
 import * as path from 'path';
 import { SemVer } from 'semver';
 import * as TypeMoq from 'typemoq';
 import { Position, Range, Selection, TextDocument, TextEditor, TextLine, Uri } from 'vscode';
+import * as sinon from 'sinon';
+import * as fs from '../../../client/common/platform/fs-paths';
 import {
+    IActiveResourceService,
     IApplicationShell,
     ICommandManager,
     IDocumentManager,
@@ -23,6 +25,7 @@ import {
     IProcessServiceFactory,
     ObservableExecutionResult,
 } from '../../../client/common/process/types';
+import { IConfigurationService, IPythonSettings } from '../../../client/common/types';
 import { Architecture } from '../../../client/common/utils/platform';
 import { IEnvironmentVariablesProvider } from '../../../client/common/variables/types';
 import { IInterpreterService } from '../../../client/interpreter/contracts';
@@ -31,10 +34,12 @@ import { EnvironmentType, PythonEnvironment } from '../../../client/pythonEnviro
 import { CodeExecutionHelper } from '../../../client/terminals/codeExecution/helper';
 import { ICodeExecutionHelper } from '../../../client/terminals/types';
 import { PYTHON_PATH } from '../../common';
+import { ReplType } from '../../../client/repl/types';
 
-const TEST_FILES_PATH = path.join(EXTENSION_ROOT_DIR, 'src', 'test', 'pythonFiles', 'terminalExec');
+const TEST_FILES_PATH = path.join(EXTENSION_ROOT_DIR, 'src', 'test', 'python_files', 'terminalExec');
 
 suite('Terminal - Code Execution Helper', () => {
+    let activeResourceService: TypeMoq.IMock<IActiveResourceService>;
     let documentManager: TypeMoq.IMock<IDocumentManager>;
     let applicationShell: TypeMoq.IMock<IApplicationShell>;
     let helper: ICodeExecutionHelper;
@@ -44,6 +49,9 @@ suite('Terminal - Code Execution Helper', () => {
     let interpreterService: TypeMoq.IMock<IInterpreterService>;
     let commandManager: TypeMoq.IMock<ICommandManager>;
     let workspaceService: TypeMoq.IMock<IWorkspaceService>;
+    let configurationService: TypeMoq.IMock<IConfigurationService>;
+    let pythonSettings: TypeMoq.IMock<IPythonSettings>;
+    let jsonParseStub: sinon.SinonStub;
     const workingPython: PythonEnvironment = {
         path: PYTHON_PATH,
         version: new SemVer('3.6.6-final'),
@@ -57,13 +65,16 @@ suite('Terminal - Code Execution Helper', () => {
     setup(() => {
         const serviceContainer = TypeMoq.Mock.ofType<IServiceContainer>();
         commandManager = TypeMoq.Mock.ofType<ICommandManager>();
+        configurationService = TypeMoq.Mock.ofType<IConfigurationService>();
         workspaceService = TypeMoq.Mock.ofType<IWorkspaceService>();
         documentManager = TypeMoq.Mock.ofType<IDocumentManager>();
         applicationShell = TypeMoq.Mock.ofType<IApplicationShell>();
         const envVariablesProvider = TypeMoq.Mock.ofType<IEnvironmentVariablesProvider>();
         processService = TypeMoq.Mock.ofType<IProcessService>();
         interpreterService = TypeMoq.Mock.ofType<IInterpreterService>();
-
+        activeResourceService = TypeMoq.Mock.ofType<IActiveResourceService>();
+        pythonSettings = TypeMoq.Mock.ofType<IPythonSettings>();
+        const resource = Uri.parse('a');
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         processService.setup((x: any) => x.then).returns(() => undefined);
         interpreterService
@@ -95,6 +106,30 @@ suite('Terminal - Code Execution Helper', () => {
         serviceContainer
             .setup((c) => c.get(TypeMoq.It.isValue(IEnvironmentVariablesProvider), TypeMoq.It.isAny()))
             .returns(() => envVariablesProvider.object);
+        serviceContainer
+            .setup((c) => c.get(TypeMoq.It.isValue(IConfigurationService)))
+            .returns(() => configurationService.object);
+        serviceContainer
+            .setup((c) => c.get(TypeMoq.It.isValue(IActiveResourceService)))
+            .returns(() => activeResourceService.object);
+        activeResourceService.setup((a) => a.getActiveResource()).returns(() => resource);
+        pythonSettings
+            .setup((s) => s.REPL)
+            .returns(() => ({
+                enableREPLSmartSend: false,
+                REPLSmartSend: false,
+                sendToNativeREPL: false,
+            }));
+        configurationService.setup((x) => x.getSettings(TypeMoq.It.isAny())).returns(() => pythonSettings.object);
+        configurationService
+            .setup((c) => c.getSettings(TypeMoq.It.isAny()))
+            .returns({
+                REPL: {
+                    EnableREPLSmartSend: false,
+                    REPLSmartSend: false,
+                },
+                // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            } as any);
         helper = new CodeExecutionHelper(serviceContainer.object);
 
         document = TypeMoq.Mock.ofType<TextDocument>();
@@ -102,7 +137,68 @@ suite('Terminal - Code Execution Helper', () => {
         editor.setup((e) => e.document).returns(() => document.object);
     });
 
+    test('normalizeLines should handle attach_bracket_paste correctly', async () => {
+        configurationService
+            .setup((c) => c.getSettings(TypeMoq.It.isAny()))
+            .returns({
+                REPL: {
+                    EnableREPLSmartSend: false,
+                    REPLSmartSend: false,
+                },
+                // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            } as any);
+        const actualProcessService = new ProcessService();
+        processService
+            .setup((p) => p.execObservable(TypeMoq.It.isAny(), TypeMoq.It.isAny(), TypeMoq.It.isAny()))
+            .returns((file, args, options) =>
+                actualProcessService.execObservable.apply(actualProcessService, [file, args, options]),
+            );
+
+        jsonParseStub = sinon.stub(JSON, 'parse');
+        const mockResult = {
+            normalized: 'print("Looks like you are on 3.13")',
+            attach_bracket_paste: true,
+        };
+        jsonParseStub.returns(mockResult);
+
+        const result = await helper.normalizeLines('print("Looks like you are on 3.13")', ReplType.terminal);
+
+        expect(result).to.equal(`\u001b[200~print("Looks like you are on 3.13")\u001b[201~`);
+        jsonParseStub.restore();
+    });
+
+    test('normalizeLines should not attach bracketed paste for < 3.13', async () => {
+        jsonParseStub = sinon.stub(JSON, 'parse');
+        const mockResult = {
+            normalized: 'print("Looks like you are not on 3.13")',
+            attach_bracket_paste: false,
+        };
+        jsonParseStub.returns(mockResult);
+
+        configurationService
+            .setup((c) => c.getSettings(TypeMoq.It.isAny()))
+            .returns({
+                REPL: {
+                    EnableREPLSmartSend: false,
+                    REPLSmartSend: false,
+                },
+                // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            } as any);
+        const actualProcessService = new ProcessService();
+        processService
+            .setup((p) => p.execObservable(TypeMoq.It.isAny(), TypeMoq.It.isAny(), TypeMoq.It.isAny()))
+            .returns((file, args, options) =>
+                actualProcessService.execObservable.apply(actualProcessService, [file, args, options]),
+            );
+
+        const result = await helper.normalizeLines('print("Looks like you are not on 3.13")', ReplType.terminal);
+
+        expect(result).to.equal('print("Looks like you are not on 3.13")');
+        jsonParseStub.restore();
+    });
+
     test('normalizeLines should call normalizeSelection.py', async () => {
+        jsonParseStub.restore();
         let execArgs = '';
 
         processService
@@ -112,31 +208,48 @@ suite('Terminal - Code Execution Helper', () => {
                 return ({} as unknown) as ObservableExecutionResult<string>;
             });
 
-        await helper.normalizeLines('print("hello")');
+        await helper.normalizeLines('print("hello")', ReplType.terminal);
 
         expect(execArgs).to.contain('normalizeSelection.py');
     });
 
     async function ensureCodeIsNormalized(source: string, expectedSource: string) {
+        configurationService
+            .setup((c) => c.getSettings(TypeMoq.It.isAny()))
+            .returns({
+                REPL: {
+                    EnableREPLSmartSend: false,
+                    REPLSmartSend: false,
+                },
+                // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            } as any);
         const actualProcessService = new ProcessService();
         processService
             .setup((p) => p.execObservable(TypeMoq.It.isAny(), TypeMoq.It.isAny(), TypeMoq.It.isAny()))
             .returns((file, args, options) =>
                 actualProcessService.execObservable.apply(actualProcessService, [file, args, options]),
             );
-        const normalizedCode = await helper.normalizeLines(source);
+        const normalizedCode = await helper.normalizeLines(source, ReplType.terminal);
         const normalizedExpected = expectedSource.replace(/\r\n/g, '\n');
         expect(normalizedCode).to.be.equal(normalizedExpected);
     }
 
     ['', '1', '2', '3', '4', '5', '6', '7', '8'].forEach((fileNameSuffix) => {
         test(`Ensure code is normalized (Sample${fileNameSuffix})`, async () => {
+            configurationService
+                .setup((c) => c.getSettings(TypeMoq.It.isAny()))
+                .returns({
+                    REPL: {
+                        EnableREPLSmartSend: false,
+                        REPLSmartSend: false,
+                    },
+                    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                } as any);
             const code = await fs.readFile(path.join(TEST_FILES_PATH, `sample${fileNameSuffix}_raw.py`), 'utf8');
             const expectedCode = await fs.readFile(
                 path.join(TEST_FILES_PATH, `sample${fileNameSuffix}_normalized_selection.py`),
                 'utf8',
             );
-
             await ensureCodeIsNormalized(code, expectedCode);
         });
     });

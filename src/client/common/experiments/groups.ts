@@ -11,9 +11,10 @@ export enum TerminalEnvVarActivation {
     experiment = 'pythonTerminalEnvVarActivation',
 }
 
-export enum ShowFormatterExtensionPrompt {
-    experiment = 'pythonPromptNewFormatterExt',
+export enum DiscoveryUsingWorkers {
+    experiment = 'pythonDiscoveryUsingWorkers',
 }
+
 // Experiment to enable the new testing rewrite.
 export enum EnableTestAdapterRewrite {
     experiment = 'pythonTestAdapter',

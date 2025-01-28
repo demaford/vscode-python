@@ -5,7 +5,7 @@
 
 import { inject, injectable } from 'inversify';
 import { l10n } from 'vscode';
-import { getExperimentationService, IExperimentationService } from 'vscode-tas-client';
+import { getExperimentationService, IExperimentationService, TargetPopulation } from 'vscode-tas-client';
 import { traceLog } from '../../logging';
 import { sendTelemetryEvent } from '../../telemetry';
 import { EventName } from '../../telemetry/constants';
@@ -16,16 +16,6 @@ import { ExperimentationTelemetry } from './telemetry';
 
 const EXP_MEMENTO_KEY = 'VSCode.ABExp.FeatureData';
 const EXP_CONFIG_ID = 'vscode';
-
-/**
- * We're defining a custom TargetPopulation specific for the Python extension.
- * This is done so the exp framework is able to differentiate between
- * VS Code insiders/public users and Python extension insiders (pre-release)/public users.
- */
-export enum TargetPopulation {
-    Insiders = 'python-insider',
-    Public = 'python-public',
-}
 
 @injectable()
 export class ExperimentService implements IExperimentService {
@@ -73,8 +63,8 @@ export class ExperimentService implements IExperimentService {
         }
 
         let targetPopulation: TargetPopulation;
-
-        if (this.appEnvironment.extensionChannel === 'insiders') {
+        // if running in VS Code Insiders, use the Insiders target population
+        if (this.appEnvironment.channel === 'insiders') {
             targetPopulation = TargetPopulation.Insiders;
         } else {
             targetPopulation = TargetPopulation.Public;
@@ -257,8 +247,10 @@ function sendOptInOptOutTelemetry(optedIn: string[], optedOut: string[], package
     const sanitizedOptedIn = optedIn.filter((exp) => optedInEnumValues.includes(exp));
     const sanitizedOptedOut = optedOut.filter((exp) => optedOutEnumValues.includes(exp));
 
+    JSON.stringify(sanitizedOptedIn.sort());
+
     sendTelemetryEvent(EventName.PYTHON_EXPERIMENTS_OPT_IN_OPT_OUT_SETTINGS, undefined, {
-        optedInto: sanitizedOptedIn,
-        optedOutFrom: sanitizedOptedOut,
+        optedInto: JSON.stringify(sanitizedOptedIn.sort()),
+        optedOutFrom: JSON.stringify(sanitizedOptedOut.sort()),
     });
 }

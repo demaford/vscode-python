@@ -10,6 +10,7 @@ import {
     DocumentSelector,
     env,
     Event,
+    EventEmitter,
     InputBox,
     InputBoxOptions,
     languages,
@@ -37,7 +38,8 @@ import {
     WorkspaceFolder,
     WorkspaceFolderPickOptions,
 } from 'vscode';
-import { IApplicationShell } from './types';
+import { traceError } from '../../logging';
+import { IApplicationShell, TerminalDataWriteEvent, TerminalExecutedCommand } from './types';
 
 @injectable()
 export class ApplicationShell implements IApplicationShell {
@@ -171,5 +173,21 @@ export class ApplicationShell implements IApplicationShell {
     }
     public createLanguageStatusItem(id: string, selector: DocumentSelector): LanguageStatusItem {
         return languages.createLanguageStatusItem(id, selector);
+    }
+    public get onDidWriteTerminalData(): Event<TerminalDataWriteEvent> {
+        try {
+            return window.onDidWriteTerminalData;
+        } catch (ex) {
+            traceError('Failed to get proposed API onDidWriteTerminalData', ex);
+            return new EventEmitter<TerminalDataWriteEvent>().event;
+        }
+    }
+    public get onDidExecuteTerminalCommand(): Event<TerminalExecutedCommand> | undefined {
+        try {
+            return window.onDidExecuteTerminalCommand;
+        } catch (ex) {
+            traceError('Failed to get proposed API TerminalExecutedCommand', ex);
+            return undefined;
+        }
     }
 }

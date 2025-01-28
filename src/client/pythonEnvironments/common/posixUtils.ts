@@ -2,12 +2,12 @@
 // Licensed under the MIT License.
 
 import * as fs from 'fs';
-import * as fsapi from 'fs-extra';
 import * as path from 'path';
 import { uniq } from 'lodash';
+import * as fsapi from '../../common/platform/fs-paths';
 import { getSearchPathEntries } from '../../common/utils/exec';
 import { resolveSymbolicLink } from './externalDependencies';
-import { traceError, traceInfo, traceVerbose } from '../../logging';
+import { traceError, traceInfo, traceVerbose, traceWarn } from '../../logging';
 
 /**
  * Determine if the given filename looks like the simplest Python executable.
@@ -117,7 +117,10 @@ function pickShortestPath(pythonPaths: string[]) {
 export async function getPythonBinFromPosixPaths(searchDirs: string[]): Promise<string[]> {
     const binToLinkMap = new Map<string, string[]>();
     for (const searchDir of searchDirs) {
-        const paths = await findPythonBinariesInDir(searchDir);
+        const paths = await findPythonBinariesInDir(searchDir).catch((ex) => {
+            traceWarn('Looking for python binaries within', searchDir, 'failed with', ex);
+            return [];
+        });
 
         for (const filepath of paths) {
             // Ensure that we have a collection of unique global binaries by

@@ -6,9 +6,7 @@
 import { IExtensionActivationService, IExtensionSingleActivationService } from '../activation/types';
 import { IServiceManager } from '../ioc/types';
 import { EnvironmentActivationService } from './activation/service';
-import { TerminalEnvVarCollectionPrompt } from './activation/terminalEnvVarCollectionPrompt';
-import { TerminalEnvVarCollectionService } from './activation/terminalEnvVarCollectionService';
-import { IEnvironmentActivationService, ITerminalEnvVarCollectionService } from './activation/types';
+import { IEnvironmentActivationService } from './activation/types';
 import { InterpreterAutoSelectionService } from './autoSelection/index';
 import { InterpreterAutoSelectionProxyService } from './autoSelection/proxy';
 import { IInterpreterAutoSelectionService, IInterpreterAutoSelectionProxyService } from './autoSelection/types';
@@ -29,8 +27,9 @@ import {
 } from './configuration/types';
 import { IActivatedEnvironmentLaunch, IInterpreterDisplay, IInterpreterHelper, IInterpreterService } from './contracts';
 import { InterpreterDisplay } from './display';
-import { InterpreterLocatorProgressStatubarHandler } from './display/progressDisplay';
+import { InterpreterLocatorProgressStatusBarHandler } from './display/progressDisplay';
 import { InterpreterHelper } from './helpers';
+import { InterpreterPathCommand } from './interpreterPathCommand';
 import { InterpreterService } from './interpreterService';
 import { ActivatedEnvironmentLaunch } from './virtualEnvs/activatedEnvLaunch';
 import { CondaInheritEnvPrompt } from './virtualEnvs/condaInheritEnvPrompt';
@@ -84,7 +83,7 @@ export function registerInterpreterTypes(serviceManager: IServiceManager): void 
 
     serviceManager.addSingleton<IExtensionSingleActivationService>(
         IExtensionSingleActivationService,
-        InterpreterLocatorProgressStatubarHandler,
+        InterpreterLocatorProgressStatusBarHandler,
     );
 
     serviceManager.addSingleton<IInterpreterAutoSelectionService>(
@@ -110,13 +109,8 @@ export function registerTypes(serviceManager: IServiceManager): void {
         IEnvironmentActivationService,
         EnvironmentActivationService,
     );
-    serviceManager.addSingleton<ITerminalEnvVarCollectionService>(
-        ITerminalEnvVarCollectionService,
-        TerminalEnvVarCollectionService,
-    );
-    serviceManager.addBinding(ITerminalEnvVarCollectionService, IExtensionActivationService);
     serviceManager.addSingleton<IExtensionSingleActivationService>(
         IExtensionSingleActivationService,
-        TerminalEnvVarCollectionPrompt,
+        InterpreterPathCommand,
     );
 }

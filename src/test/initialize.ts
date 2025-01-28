@@ -14,7 +14,7 @@ import { sleep } from './core';
 export * from './constants';
 export * from './ciConstants';
 
-const dummyPythonFile = path.join(__dirname, '..', '..', 'src', 'test', 'pythonFiles', 'dummy.py');
+const dummyPythonFile = path.join(__dirname, '..', '..', 'src', 'test', 'python_files', 'dummy.py');
 export const multirootPath = path.join(__dirname, '..', '..', 'src', 'testMultiRootWkspc');
 const workspace3Uri = vscode.Uri.file(path.join(multirootPath, 'workspace3'));
 
@@ -31,10 +31,14 @@ export async function initializePython() {
 
 export async function initialize(): Promise<IExtensionTestApi> {
     await initializePython();
+
+    const pythonConfig = vscode.workspace.getConfiguration('python');
+    await pythonConfig.update('experiments.optInto', ['All'], vscode.ConfigurationTarget.Global);
+    await pythonConfig.update('experiments.optOutFrom', [], vscode.ConfigurationTarget.Global);
     const api = await activateExtension();
     if (!IS_SMOKE_TEST) {
         // When running smoke tests, we won't have access to these.
-        const configSettings = await import('../client/common/configSettings');
+        const configSettings = await import('../client/common/configSettings.js');
         // Dispose any cached python settings (used only in test env).
         configSettings.PythonSettings.dispose();
     }
@@ -54,7 +58,7 @@ export async function initializeTest(): Promise<any> {
     await closeActiveWindows();
     if (!IS_SMOKE_TEST) {
         // When running smoke tests, we won't have access to these.
-        const configSettings = await import('../client/common/configSettings');
+        const configSettings = await import('../client/common/configSettings.js');
         // Dispose any cached python settings (used only in test env).
         configSettings.PythonSettings.dispose();
     }

@@ -12,7 +12,7 @@ import { ILanguageServerOutputChannel } from './activation/types';
 import { PythonExtension } from './api/types';
 import { isTestExecution, PYTHON_LANGUAGE } from './common/constants';
 import { IConfigurationService, Resource } from './common/types';
-import { getDebugpyLauncherArgs, getDebugpyPackagePath } from './debugger/extension/adapter/remoteLaunchers';
+import { getDebugpyLauncherArgs } from './debugger/extension/adapter/remoteLaunchers';
 import { IInterpreterService } from './interpreter/contracts';
 import { IServiceContainer, IServiceManager } from './ioc/types';
 import { JupyterExtensionIntegration } from './jupyter/jupyterIntegration';
@@ -21,6 +21,8 @@ import { IDiscoveryAPI } from './pythonEnvironments/base/locator';
 import { buildEnvironmentApi } from './environmentApi';
 import { ApiForPylance } from './pylanceApi';
 import { getTelemetryReporter } from './telemetry';
+import { TensorboardExtensionIntegration } from './tensorBoard/tensorboardIntegration';
+import { getDebugpyPath } from './debugger/pythonDebugger';
 
 export function buildApi(
     ready: Promise<void>,
@@ -31,7 +33,14 @@ export function buildApi(
     const configurationService = serviceContainer.get<IConfigurationService>(IConfigurationService);
     const interpreterService = serviceContainer.get<IInterpreterService>(IInterpreterService);
     serviceManager.addSingleton<JupyterExtensionIntegration>(JupyterExtensionIntegration, JupyterExtensionIntegration);
+    serviceManager.addSingleton<TensorboardExtensionIntegration>(
+        TensorboardExtensionIntegration,
+        TensorboardExtensionIntegration,
+    );
     const jupyterIntegration = serviceContainer.get<JupyterExtensionIntegration>(JupyterExtensionIntegration);
+    const tensorboardIntegration = serviceContainer.get<TensorboardExtensionIntegration>(
+        TensorboardExtensionIntegration,
+    );
     const outputChannel = serviceContainer.get<ILanguageServerOutputChannel>(ILanguageServerOutputChannel);
 
     const api: PythonExtension & {
@@ -39,6 +48,12 @@ export function buildApi(
          * Internal API just for Jupyter, hence don't include in the official types.
          */
         jupyter: {
+            registerHooks(): void;
+        };
+        /**
+         * Internal API just for Tensorboard, hence don't include in the official types.
+         */
+        tensorboard: {
             registerHooks(): void;
         };
     } & {
@@ -65,7 +80,6 @@ export function buildApi(
              * @param {Resource} [resource] A resource for which the setting is asked for.
              * * When no resource is provided, the setting scoped to the first workspace folder is returned.
              * * If no folder is present, it returns the global setting.
-             * @returns {({ execCommand: string[] | undefined })}
              */
             getExecutionDetails(
                 resource?: Resource,
@@ -92,6 +106,9 @@ export function buildApi(
         jupyter: {
             registerHooks: () => jupyterIntegration.integrateWithJupyterExtension(),
         },
+        tensorboard: {
+            registerHooks: () => tensorboardIntegration.integrateWithTensorboardExtension(),
+        },
         debug: {
             async getRemoteLauncherCommand(
                 host: string,
@@ -105,7 +122,7 @@ export function buildApi(
                 });
             },
             async getDebuggerPackagePath(): Promise<string | undefined> {
-                return getDebugpyPackagePath();
+                return getDebugpyPath();
             },
         },
         settings: {

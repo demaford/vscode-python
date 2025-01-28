@@ -6,7 +6,7 @@
 import * as assert from 'assert';
 import { expect, use } from 'chai';
 import * as chaiAsPromised from 'chai-as-promised';
-import * as fs from 'fs-extra';
+import * as fs from '../../../../client/common/platform/fs-paths';
 import * as path from 'path';
 import * as sinon from 'sinon';
 import rewiremock from 'rewiremock';
@@ -28,8 +28,9 @@ import * as windowApis from '../../../../client/common/vscodeApis/windowApis';
 import { PersistentState, PersistentStateFactory } from '../../../../client/common/persistentState';
 import { ICommandManager } from '../../../../client/common/application/types';
 import { CommandManager } from '../../../../client/common/application/commandManager';
+import * as pythonDebugger from '../../../../client/debugger/pythonDebugger';
 
-use(chaiAsPromised);
+use(chaiAsPromised.default);
 
 suite('Debugging - Adapter Factory', () => {
     let factory: IDebugAdapterDescriptorFactory;
@@ -39,9 +40,11 @@ suite('Debugging - Adapter Factory', () => {
     let showErrorMessageStub: sinon.SinonStub;
     let readJSONSyncStub: sinon.SinonStub;
     let commandManager: ICommandManager;
+    let getDebugpyPathStub: sinon.SinonStub;
 
     const nodeExecutable = undefined;
-    const debugAdapterPath = path.join(EXTENSION_ROOT_DIR, 'pythonFiles', 'lib', 'python', 'debugpy', 'adapter');
+    const debugpyPath = path.join(EXTENSION_ROOT_DIR, 'python_files', 'lib', 'python', 'debugpy');
+    const debugAdapterPath = path.join(debugpyPath, 'adapter');
     const pythonPath = path.join('path', 'to', 'python', 'interpreter');
     const interpreter = {
         architecture: Architecture.Unknown,
@@ -75,7 +78,8 @@ suite('Debugging - Adapter Factory', () => {
         stateFactory = mock(PersistentStateFactory);
         state = mock(PersistentState) as PersistentState<boolean | undefined>;
         commandManager = mock(CommandManager);
-
+        getDebugpyPathStub = sinon.stub(pythonDebugger, 'getDebugpyPath');
+        getDebugpyPathStub.resolves(debugpyPath);
         showErrorMessageStub = sinon.stub(windowApis, 'showErrorMessage');
 
         when(

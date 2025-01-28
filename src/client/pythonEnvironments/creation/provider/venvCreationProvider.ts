@@ -9,7 +9,7 @@ import { execObservable } from '../../../common/process/rawProcessApis';
 import { createDeferred } from '../../../common/utils/async';
 import { Common, CreateEnv } from '../../../common/utils/localize';
 import { traceError, traceInfo, traceLog, traceVerbose } from '../../../logging';
-import { CreateEnvironmentProgress } from '../types';
+import { CreateEnvironmentOptionsInternal, CreateEnvironmentProgress } from '../types';
 import { pickWorkspaceFolder } from '../common/workspaceSelection';
 import { IInterpreterQuickPick } from '../../../interpreter/configuration/types';
 import { EnvironmentType, PythonEnvironment } from '../../info';
@@ -32,8 +32,14 @@ import {
     CreateEnvironmentResult,
 } from '../proposed.createEnvApis';
 
-function generateCommandArgs(installInfo?: IPackageInstallSelection[], addGitIgnore?: boolean): string[] {
+interface IVenvCommandArgs {
+    argv: string[];
+    stdin: string | undefined;
+}
+
+function generateCommandArgs(installInfo?: IPackageInstallSelection[], addGitIgnore?: boolean): IVenvCommandArgs {
     const command: string[] = [createVenvScript()];
+    let stdin: string | undefined;
 
     if (addGitIgnore) {
         command.push('--git-ignore');
@@ -52,14 +58,21 @@ function generateCommandArgs(installInfo?: IPackageInstallSelection[], addGitIgn
         });
 
         const requirements = installInfo.filter((i) => i.installType === 'requirements').map((i) => i.installItem);
-        requirements.forEach((r) => {
-            if (r) {
-                command.push('--requirements', r);
-            }
-        });
+
+        if (requirements.length < 10) {
+            requirements.forEach((r) => {
+                if (r) {
+                    command.push('--requirements', r);
+                }
+            });
+        } else {
+            command.push('--stdin');
+            // Too many requirements can cause the command line to be too long error.
+            stdin = JSON.stringify({ requirements });
+        }
     }
 
-    return command;
+    return { argv: command, stdin };
 }
 
 function getVenvFromOutput(output: string): string | undefined {
@@ -81,7 +94,7 @@ function getVenvFromOutput(output: string): string | undefined {
 async function createVenv(
     workspace: WorkspaceFolder,
     command: string,
-    args: string[],
+    args: IVenvCommandArgs,
     progress: CreateEnvironmentProgress,
     token?: CancellationToken,
 ): Promise<string | undefined> {
@@ -94,11 +107,15 @@ async function createVenv(
     });
 
     const deferred = createDeferred<string | undefined>();
-    traceLog('Running Env creation script: ', [command, ...args]);
-    const { proc, out, dispose } = execObservable(command, args, {
+    traceLog('Running Env creation script: ', [command, ...args.argv]);
+    if (args.stdin) {
+        traceLog('Requirements passed in via stdin: ', args.stdin);
+    }
+    const { proc, out, dispose } = execObservable(command, args.argv, {
         mergeStdOutErr: true,
         token,
         cwd: workspace.uri.fsPath,
+        stdinStr: args.stdin,
     });
 
     const progressAndTelemetry = new VenvProgressAndTelemetry(progress);
@@ -106,7 +123,7 @@ async function createVenv(
     out.subscribe(
         (value) => {
             const output = value.out.split(/\r?\n/g).join(os.EOL);
-            traceLog(output);
+            traceLog(output.trimEnd());
             if (output.includes(VENV_CREATED_MARKER) || output.includes(VENV_EXISTING_MARKER)) {
                 venvPath = getVenvFromOutput(output);
             }
@@ -135,13 +152,18 @@ async function createVenv(
 export class VenvCreationProvider implements CreateEnvironmentProvider {
     constructor(private readonly interpreterQuickPick: IInterpreterQuickPick) {}
 
-    public async createEnvironment(options?: CreateEnvironmentOptions): Promise<CreateEnvironmentResult | undefined> {
+    public async createEnvironment(
+        options?: CreateEnvironmentOptions & CreateEnvironmentOptionsInternal,
+    ): Promise<CreateEnvironmentResult | undefined> {
         let workspace: WorkspaceFolder | undefined;
         const workspaceStep = new MultiStepNode(
             undefined,
             async (context?: MultiStepAction) => {
                 try {
-                    workspace = (await pickWorkspaceFolder(undefined, context)) as WorkspaceFolder | undefined;
+                    workspace = (await pickWorkspaceFolder(
+                        { preSelectedWorkspace: options?.workspaceFolder },
+                        context,
+                    )) as WorkspaceFolder | undefined;
                 } catch (ex) {
                     if (ex === MultiStepAction.Back || ex === MultiStepAction.Cancel) {
                         return ex;

@@ -6,10 +6,6 @@ if ((Reflect as any).metadata === undefined) {
     require('reflect-metadata');
 }
 
-// Initialize source maps (this must never be moved up nor further down).
-import { initialize } from './sourceMapSupport';
-initialize(require('vscode'));
-
 //===============================================
 // We start tracking the extension's startup time at this point.  The
 // locations at which we record various Intervals are marked below in
@@ -46,6 +42,7 @@ import { WorkspaceService } from './common/application/workspace';
 import { disposeAll } from './common/utils/resourceLifecycle';
 import { ProposedExtensionAPI } from './proposedApiTypes';
 import { buildProposedApi } from './proposedApi';
+import { GLOBAL_PERSISTENT_KEYS } from './common/persistentState';
 
 durations.codeLoadingTime = stopWatch.elapsedTime;
 
@@ -62,7 +59,9 @@ export async function activate(context: IExtensionContext): Promise<PythonExtens
     let api: PythonExtension;
     let ready: Promise<void>;
     let serviceContainer: IServiceContainer;
+    let isFirstSession: boolean | undefined;
     try {
+        isFirstSession = context.globalState.get(GLOBAL_PERSISTENT_KEYS, []).length === 0;
         const workspaceService = new WorkspaceService();
         context.subscriptions.push(
             workspaceService.onDidGrantWorkspaceTrust(async () => {
@@ -79,8 +78,7 @@ export async function activate(context: IExtensionContext): Promise<PythonExtens
     }
     // Send the "success" telemetry only if activation did not fail.
     // Otherwise Telemetry is send via the error handler.
-
-    sendStartupTelemetry(ready, durations, stopWatch, serviceContainer)
+    sendStartupTelemetry(ready, durations, stopWatch, serviceContainer, isFirstSession)
         // Run in the background.
         .ignoreErrors();
     return api;
@@ -110,6 +108,7 @@ async function activateUnsafe(
     const activationDeferred = createDeferred<void>();
     displayProgress(activationDeferred.promise);
     startupDurations.startActivateTime = startupStopWatch.elapsedTime;
+    const activationStopWatch = new StopWatch();
 
     //===============================================
     // activation starts here
@@ -127,7 +126,7 @@ async function activateUnsafe(
     const components = await initializeComponents(ext);
 
     // Then we finish activating.
-    const componentsActivated = await activateComponents(ext, components);
+    const componentsActivated = await activateComponents(ext, components, activationStopWatch);
     activateFeatures(ext, components);
 
     const nonBlocking = componentsActivated.map((r) => r.fullyReady);

@@ -1,3 +1,5 @@
+/* eslint-disable @typescript-eslint/no-use-before-define */
+/* eslint-disable no-async-promise-executor */
 // Copyright (c) Microsoft Corporation. All rights reserved.
 // Licensed under the MIT License.
 
@@ -153,6 +155,7 @@ export async function* chain<T>(
 ): IAsyncIterableIterator<T> {
     const promises = iterators.map(getNext);
     let numRunning = iterators.length;
+
     while (numRunning > 0) {
         // Promise.race will not fail, because each promise calls getNext,
         // Which handles failures by wrapping each iterator in a try/catch block.
@@ -227,4 +230,41 @@ export async function flattenIterator<T>(iterator: IAsyncIterator<T>): Promise<T
         results.push(item);
     }
     return results;
+}
+
+/**
+ * Get everything yielded by the iterable.
+ */
+export async function flattenIterable<T>(iterableItem: AsyncIterable<T>): Promise<T[]> {
+    const results: T[] = [];
+    for await (const item of iterableItem) {
+        results.push(item);
+    }
+    return results;
+}
+
+/**
+ * Wait for a condition to be fulfilled within a timeout.
+ */
+export async function waitForCondition(
+    condition: () => Promise<boolean>,
+    timeoutMs: number,
+    errorMessage: string,
+): Promise<void> {
+    return new Promise<void>(async (resolve, reject) => {
+        const timeout = setTimeout(() => {
+            clearTimeout(timeout);
+
+            clearTimeout(timer);
+            reject(new Error(errorMessage));
+        }, timeoutMs);
+        const timer = setInterval(async () => {
+            if (!(await condition().catch(() => false))) {
+                return;
+            }
+            clearTimeout(timeout);
+            clearTimeout(timer);
+            resolve();
+        }, 10);
+    });
 }

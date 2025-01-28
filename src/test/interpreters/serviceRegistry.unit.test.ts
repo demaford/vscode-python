@@ -35,7 +35,7 @@ import {
     IInterpreterService,
 } from '../../client/interpreter/contracts';
 import { InterpreterDisplay } from '../../client/interpreter/display';
-import { InterpreterLocatorProgressStatubarHandler } from '../../client/interpreter/display/progressDisplay';
+import { InterpreterLocatorProgressStatusBarHandler } from '../../client/interpreter/display/progressDisplay';
 import { InterpreterHelper } from '../../client/interpreter/helpers';
 import { InterpreterService } from '../../client/interpreter/interpreterService';
 import { registerTypes } from '../../client/interpreter/serviceRegistry';
@@ -43,6 +43,7 @@ import { ActivatedEnvironmentLaunch } from '../../client/interpreter/virtualEnvs
 import { CondaInheritEnvPrompt } from '../../client/interpreter/virtualEnvs/condaInheritEnvPrompt';
 import { VirtualEnvironmentPrompt } from '../../client/interpreter/virtualEnvs/virtualEnvPrompt';
 import { ServiceManager } from '../../client/ioc/serviceManager';
+import { InterpreterPathCommand } from '../../client/interpreter/interpreterPathCommand';
 
 suite('Interpreters - Service Registry', () => {
     test('Registrations', () => {
@@ -67,13 +68,14 @@ suite('Interpreters - Service Registry', () => {
             [IInterpreterHelper, InterpreterHelper],
             [IInterpreterComparer, EnvironmentTypeComparer],
 
-            [IExtensionSingleActivationService, InterpreterLocatorProgressStatubarHandler],
+            [IExtensionSingleActivationService, InterpreterLocatorProgressStatusBarHandler],
 
             [IInterpreterAutoSelectionProxyService, InterpreterAutoSelectionProxyService],
             [IInterpreterAutoSelectionService, InterpreterAutoSelectionService],
 
             [EnvironmentActivationService, EnvironmentActivationService],
             [IEnvironmentActivationService, EnvironmentActivationService],
+            [IExtensionSingleActivationService, InterpreterPathCommand],
             [IExtensionActivationService, CondaInheritEnvPrompt],
             [IActivatedEnvironmentLaunch, ActivatedEnvironmentLaunch],
         ].forEach((mapping) => {

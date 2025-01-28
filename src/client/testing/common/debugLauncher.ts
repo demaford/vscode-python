@@ -1,22 +1,21 @@
 import { inject, injectable, named } from 'inversify';
 import * as path from 'path';
-import { DebugConfiguration, l10n, Uri, WorkspaceFolder } from 'vscode';
+import { DebugConfiguration, l10n, Uri, WorkspaceFolder, DebugSession, DebugSessionOptions } from 'vscode';
 import { IApplicationShell, IDebugService } from '../../common/application/types';
 import { EXTENSION_ROOT_DIR } from '../../common/constants';
 import * as internalScripts from '../../common/process/internal/scripts';
 import { IConfigurationService, IPythonSettings } from '../../common/types';
-import { DebuggerTypeName } from '../../debugger/constants';
+import { DebuggerTypeName, PythonDebuggerTypeName } from '../../debugger/constants';
 import { IDebugConfigurationResolver } from '../../debugger/extension/configuration/types';
 import { DebugPurpose, LaunchRequestArguments } from '../../debugger/types';
 import { IServiceContainer } from '../../ioc/types';
-import { traceError } from '../../logging';
+import { traceError, traceVerbose } from '../../logging';
 import { TestProvider } from '../types';
 import { ITestDebugLauncher, LaunchOptions } from './types';
 import { getConfigurationsForWorkspace } from '../../debugger/extension/configuration/launch.json/launchJsonReader';
 import { getWorkspaceFolder, getWorkspaceFolders } from '../../common/vscodeApis/workspaceApis';
 import { showErrorMessage } from '../../common/vscodeApis/windowApis';
 import { createDeferred } from '../../common/utils/async';
-import { pythonTestAdapterRewriteEnabled } from '../testController/common/utils';
 import { addPathToPythonpath } from './helpers';
 
 @injectable()
@@ -32,10 +31,25 @@ export class DebugLauncher implements ITestDebugLauncher {
         this.configService = this.serviceContainer.get<IConfigurationService>(IConfigurationService);
     }
 
-    public async launchDebugger(options: LaunchOptions, callback?: () => void): Promise<void> {
+    public async launchDebugger(
+        options: LaunchOptions,
+        callback?: () => void,
+        sessionOptions?: DebugSessionOptions,
+    ): Promise<void> {
+        const deferred = createDeferred<void>();
+        let hasCallbackBeenCalled = false;
         if (options.token && options.token.isCancellationRequested) {
+            hasCallbackBeenCalled = true;
             return undefined;
+            deferred.resolve();
+            callback?.();
         }
+
+        options.token?.onCancellationRequested(() => {
+            deferred.resolve();
+            callback?.();
+            hasCallbackBeenCalled = true;
+        });
 
         const workspaceFolder = DebugLauncher.resolveWorkspaceFolder(options.cwd);
         const launchArgs = await this.getLaunchArgs(
@@ -45,12 +59,23 @@ export class DebugLauncher implements ITestDebugLauncher {
         );
         const debugManager = this.serviceContainer.get<IDebugService>(IDebugService);
 
-        const deferred = createDeferred<void>();
-        debugManager.onDidTerminateDebugSession(() => {
-            deferred.resolve();
-            callback?.();
+        let activatedDebugSession: DebugSession | undefined;
+        debugManager.startDebugging(workspaceFolder, launchArgs, sessionOptions).then(() => {
+            // Save the debug session after it is started so we can check if it is the one that was terminated.
+            activatedDebugSession = debugManager.activeDebugSession;
         });
-        debugManager.startDebugging(workspaceFolder, launchArgs);
+        debugManager.onDidTerminateDebugSession((session) => {
+            traceVerbose(`Debug session terminated. sessionId: ${session.id}`);
+            // Only resolve no callback has been made and the session is the one that was started.
+            if (
+                !hasCallbackBeenCalled &&
+                activatedDebugSession !== undefined &&
+                session.id === activatedDebugSession?.id
+            ) {
+                deferred.resolve();
+                callback?.();
+            }
+        });
         return deferred.promise;
     }
 
@@ -78,7 +103,7 @@ export class DebugLauncher implements ITestDebugLauncher {
         if (!debugConfig) {
             debugConfig = {
                 name: 'Debug Unit Test',
-                type: 'python',
+                type: 'debugpy',
                 request: 'test',
                 subProcess: true,
             };
@@ -87,7 +112,7 @@ export class DebugLauncher implements ITestDebugLauncher {
             debugConfig.rules = [];
         }
         debugConfig.rules.push({
-            path: path.join(EXTENSION_ROOT_DIR, 'pythonFiles'),
+            path: path.join(EXTENSION_ROOT_DIR, 'python_files'),
             include: false,
         });
 
@@ -118,7 +143,7 @@ export class DebugLauncher implements ITestDebugLauncher {
             for (const cfg of configs) {
                 if (
                     cfg.name &&
-                    cfg.type === DebuggerTypeName &&
+                    (cfg.type === DebuggerTypeName || cfg.type === PythonDebuggerTypeName) &&
                     (cfg.request === 'test' ||
                         (cfg as LaunchRequestArguments).purpose?.includes(DebugPurpose.DebugTest))
                 ) {
@@ -141,8 +166,6 @@ export class DebugLauncher implements ITestDebugLauncher {
     ) {
         // cfg.pythonPath is handled by LaunchConfigurationResolver.
 
-        // Default value of justMyCode is not provided intentionally, for now we derive its value required for launchArgs using debugStdLib
-        // Have to provide it if and when we remove complete support for debugStdLib
         if (!cfg.console) {
             cfg.console = 'internalConsole';
         }
@@ -175,11 +198,10 @@ export class DebugLauncher implements ITestDebugLauncher {
         workspaceFolder: WorkspaceFolder,
         options: LaunchOptions,
     ): Promise<LaunchRequestArguments> {
-        const pythonTestAdapterRewriteExperiment = pythonTestAdapterRewriteEnabled(this.serviceContainer);
         const configArgs = debugConfig as LaunchRequestArguments;
         const testArgs =
             options.testProvider === 'unittest' ? options.args.filter((item) => item !== '--debug') : options.args;
-        const script = DebugLauncher.getTestLauncherScript(options.testProvider, pythonTestAdapterRewriteExperiment);
+        const script = DebugLauncher.getTestLauncherScript(options.testProvider);
         const args = script(testArgs);
         const [program] = args;
         configArgs.program = program;
@@ -205,27 +227,19 @@ export class DebugLauncher implements ITestDebugLauncher {
         }
         launchArgs.request = 'launch';
 
-        // Both types of tests need to have the port for the test result server.
-        if (options.runTestIdsPort) {
+        if (options.pytestPort && options.runTestIdsPort) {
             launchArgs.env = {
                 ...launchArgs.env,
-                RUN_TEST_IDS_PORT: options.runTestIdsPort,
+                TEST_RUN_PIPE: options.pytestPort,
+                RUN_TEST_IDS_PIPE: options.runTestIdsPort,
             };
+        } else {
+            throw Error(
+                `Missing value for debug setup, both port and uuid need to be defined. port: "${options.pytestPort}" uuid: "${options.pytestUUID}"`,
+            );
         }
-        if (options.testProvider === 'pytest' && pythonTestAdapterRewriteExperiment) {
-            if (options.pytestPort && options.pytestUUID) {
-                launchArgs.env = {
-                    ...launchArgs.env,
-                    TEST_PORT: options.pytestPort,
-                    TEST_UUID: options.pytestUUID,
-                };
-            } else {
-                throw Error(
-                    `Missing value for debug setup, both port and uuid need to be defined. port: "${options.pytestPort}" uuid: "${options.pytestUUID}"`,
-                );
-            }
-        }
-        const pluginPath = path.join(EXTENSION_ROOT_DIR, 'pythonFiles');
+
+        const pluginPath = path.join(EXTENSION_ROOT_DIR, 'python_files');
         // check if PYTHONPATH is already set in the environment variables
         if (launchArgs.env) {
             const additionalPythonPath = [pluginPath];
@@ -246,19 +260,13 @@ export class DebugLauncher implements ITestDebugLauncher {
         return launchArgs;
     }
 
-    private static getTestLauncherScript(testProvider: TestProvider, pythonTestAdapterRewriteExperiment?: boolean) {
+    private static getTestLauncherScript(testProvider: TestProvider) {
         switch (testProvider) {
             case 'unittest': {
-                if (pythonTestAdapterRewriteExperiment) {
-                    return internalScripts.execution_py_testlauncher; // this is the new way to run unittest execution, debugger
-                }
-                return internalScripts.visualstudio_py_testlauncher; // old way unittest execution, debugger
+                return internalScripts.execution_py_testlauncher; // this is the new way to run unittest execution, debugger
             }
             case 'pytest': {
-                if (pythonTestAdapterRewriteExperiment) {
-                    return internalScripts.pytestlauncher; // this is the new way to run pytest execution, debugger
-                }
-                return internalScripts.testlauncher; // old way pytest execution, debugger
+                return internalScripts.pytestlauncher; // this is the new way to run pytest execution, debugger
             }
             default: {
                 throw new Error(`Unknown test provider '${testProvider}'`);

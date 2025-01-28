@@ -28,7 +28,6 @@ declare interface String {
 /**
  * Appropriately formats a string so it can be used as an argument for a command in a shell.
  * E.g. if an argument contains a space, then it will be enclosed within double quotes.
- * @param {String} value.
  */
 String.prototype.toCommandArgumentForPythonExt = function (this: string): string {
     if (!this) {
@@ -62,13 +61,6 @@ String.prototype.trimQuotes = function (this: string): string {
     }
     return this.replace(/(^['"])|(['"]$)/g, '');
 };
-
-declare interface Promise<T> {
-    /**
-     * Catches task error and ignores them.
-     */
-    ignoreErrors(): Promise<void>;
-}
 
 /**
  * Explicitly tells that promise should be run asynchonously.

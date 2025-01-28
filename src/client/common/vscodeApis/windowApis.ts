@@ -16,8 +16,20 @@ import {
     TextEditor,
     window,
     Disposable,
+    QuickPickItemButtonEvent,
+    Uri,
+    TerminalShellExecutionStartEvent,
+    LogOutputChannel,
+    OutputChannel,
+    TerminalLinkProvider,
 } from 'vscode';
 import { createDeferred, Deferred } from '../utils/async';
+import { Resource } from '../types';
+import { getWorkspaceFolders } from './workspaceApis';
+
+export function showTextDocument(uri: Uri): Thenable<TextEditor> {
+    return window.showTextDocument(uri);
+}
 
 export function showQuickPick<T extends QuickPickItem>(
     items: readonly T[] | Thenable<readonly T[]>,
@@ -46,6 +58,23 @@ export function showErrorMessage<T extends MessageItem>(
 
 export function showErrorMessage<T>(message: string, ...items: any[]): Thenable<T | undefined> {
     return window.showErrorMessage(message, ...items);
+}
+
+export function showWarningMessage<T extends string>(message: string, ...items: T[]): Thenable<T | undefined>;
+export function showWarningMessage<T extends string>(
+    message: string,
+    options: MessageOptions,
+    ...items: T[]
+): Thenable<T | undefined>;
+export function showWarningMessage<T extends MessageItem>(message: string, ...items: T[]): Thenable<T | undefined>;
+export function showWarningMessage<T extends MessageItem>(
+    message: string,
+    options: MessageOptions,
+    ...items: T[]
+): Thenable<T | undefined>;
+
+export function showWarningMessage<T>(message: string, ...items: any[]): Thenable<T | undefined> {
+    return window.showWarningMessage(message, ...items);
 }
 
 export function showInformationMessage<T extends string>(message: string, ...items: T[]): Thenable<T | undefined>;
@@ -81,6 +110,10 @@ export function onDidChangeActiveTextEditor(handler: (e: TextEditor | undefined)
     return window.onDidChangeActiveTextEditor(handler);
 }
 
+export function onDidStartTerminalShellExecution(handler: (e: TerminalShellExecutionStartEvent) => void): Disposable {
+    return window.onDidStartTerminalShellExecution(handler);
+}
+
 export enum MultiStepAction {
     Back = 'Back',
     Cancel = 'Cancel',
@@ -91,6 +124,7 @@ export async function showQuickPickWithBack<T extends QuickPickItem>(
     items: readonly T[],
     options?: QuickPickOptions,
     token?: CancellationToken,
+    itemButtonHandler?: (e: QuickPickItemButtonEvent<T>) => void,
 ): Promise<T | T[] | undefined> {
     const quickPick: QuickPick<T> = window.createQuickPick<T>();
     const disposables: Disposable[] = [quickPick];
@@ -128,6 +162,11 @@ export async function showQuickPickWithBack<T extends QuickPickItem>(
         quickPick.onDidHide(() => {
             if (!deferred.completed) {
                 deferred.resolve(undefined);
+            }
+        }),
+        quickPick.onDidTriggerItemButton((e) => {
+            if (itemButtonHandler) {
+                itemButtonHandler(e);
             }
         }),
     );
@@ -203,4 +242,24 @@ export function createStepForwardEndNode<T>(deferred?: Deferred<T>, result?: T):
         },
         undefined,
     );
+}
+
+export function getActiveResource(): Resource {
+    const editor = window.activeTextEditor;
+    if (editor && !editor.document.isUntitled) {
+        return editor.document.uri;
+    }
+    const workspaces = getWorkspaceFolders();
+    return Array.isArray(workspaces) && workspaces.length > 0 ? workspaces[0].uri : undefined;
+}
+
+export function createOutputChannel(name: string, languageId?: string): OutputChannel {
+    return window.createOutputChannel(name, languageId);
+}
+export function createLogOutputChannel(name: string, options: { log: true }): LogOutputChannel {
+    return window.createOutputChannel(name, options);
+}
+
+export function registerTerminalLinkProvider(provider: TerminalLinkProvider): Disposable {
+    return window.registerTerminalLinkProvider(provider);
 }

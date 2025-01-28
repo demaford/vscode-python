@@ -3,10 +3,10 @@
 
 'use strict';
 
-import { inject, injectable, named } from 'inversify';
+import { inject, injectable, named, optional } from 'inversify';
 import { Memento } from 'vscode';
 import { IExtensionSingleActivationService } from '../activation/types';
-import { traceError, traceVerbose, traceWarn } from '../logging';
+import { traceError } from '../logging';
 import { ICommandManager } from './application/types';
 import { Commands } from './constants';
 import {
@@ -19,6 +19,48 @@ import {
 } from './types';
 import { cache } from './utils/decorators';
 import { noop } from './utils/misc';
+import { clearCacheDirectory } from '../pythonEnvironments/base/locators/common/nativePythonFinder';
+import { clearCache, useEnvExtension } from '../envExt/api.internal';
+
+let _workspaceState: Memento | undefined;
+const _workspaceKeys: string[] = [];
+export function initializePersistentStateForTriggers(context: IExtensionContext) {
+    _workspaceState = context.workspaceState;
+}
+
+export function getWorkspaceStateValue<T>(key: string, defaultValue?: T): T | undefined {
+    if (!_workspaceState) {
+        throw new Error('Workspace state not initialized');
+    }
+    if (defaultValue === undefined) {
+        return _workspaceState.get<T>(key);
+    }
+    return _workspaceState.get<T>(key, defaultValue);
+}
+
+export async function updateWorkspaceStateValue<T>(key: string, value: T): Promise<void> {
+    if (!_workspaceState) {
+        throw new Error('Workspace state not initialized');
+    }
+    try {
+        _workspaceKeys.push(key);
+        await _workspaceState.update(key, value);
+        const after = getWorkspaceStateValue(key);
+        if (JSON.stringify(after) !== JSON.stringify(value)) {
+            await _workspaceState.update(key, undefined);
+            await _workspaceState.update(key, value);
+            traceError('Error while updating workspace state for key:', key);
+        }
+    } catch (ex) {
+        traceError(`Error while updating workspace state for key [${key}]:`, ex);
+    }
+}
+
+async function clearWorkspaceState(): Promise<void> {
+    if (_workspaceState !== undefined) {
+        await Promise.all(_workspaceKeys.map((key) => updateWorkspaceStateValue(key, undefined)));
+    }
+}
 
 export class PersistentState<T> implements IPersistentState<T> {
     constructor(
@@ -52,12 +94,8 @@ export class PersistentState<T> implements IPersistentState<T> {
                 // Due to a VSCode bug sometimes the changes are not reflected in the storage, atleast not immediately.
                 // It is noticed however that if we reset the storage first and then update it, it works.
                 // https://github.com/microsoft/vscode/issues/171827
-                traceVerbose('Storage update failed for key', this.key, ' retrying by resetting first');
                 await this.updateValue(undefined as any, false);
                 await this.updateValue(newValue, false);
-                if (JSON.stringify(this.value) != JSON.stringify(newValue)) {
-                    traceWarn('Retry failed, storage update failed for key', this.key);
-                }
             }
         } catch (ex) {
             traceError('Error while updating storage for key:', this.key, ex);
@@ -68,7 +106,7 @@ export class PersistentState<T> implements IPersistentState<T> {
 export const GLOBAL_PERSISTENT_KEYS_DEPRECATED = 'PYTHON_EXTENSION_GLOBAL_STORAGE_KEYS';
 export const WORKSPACE_PERSISTENT_KEYS_DEPRECATED = 'PYTHON_EXTENSION_WORKSPACE_STORAGE_KEYS';
 
-const GLOBAL_PERSISTENT_KEYS = 'PYTHON_GLOBAL_STORAGE_KEYS';
+export const GLOBAL_PERSISTENT_KEYS = 'PYTHON_GLOBAL_STORAGE_KEYS';
 const WORKSPACE_PERSISTENT_KEYS = 'PYTHON_WORKSPACE_STORAGE_KEYS';
 type KeysStorageType = 'global' | 'workspace';
 export type KeysStorage = { key: string; defaultValue: unknown };
@@ -90,10 +128,17 @@ export class PersistentStateFactory implements IPersistentStateFactory, IExtensi
         @inject(IMemento) @named(GLOBAL_MEMENTO) private globalState: Memento,
         @inject(IMemento) @named(WORKSPACE_MEMENTO) private workspaceState: Memento,
         @inject(ICommandManager) private cmdManager?: ICommandManager,
+        @inject(IExtensionContext) @optional() private context?: IExtensionContext,
     ) {}
 
     public async activate(): Promise<void> {
-        this.cmdManager?.registerCommand(Commands.ClearStorage, this.cleanAllPersistentStates.bind(this));
+        this.cmdManager?.registerCommand(Commands.ClearStorage, async () => {
+            await clearWorkspaceState();
+            await this.cleanAllPersistentStates();
+            if (useEnvExtension()) {
+                await clearCache();
+            }
+        });
         const globalKeysStorageDeprecated = this.createGlobalPersistentState(GLOBAL_PERSISTENT_KEYS_DEPRECATED, []);
         const workspaceKeysStorageDeprecated = this.createWorkspacePersistentState(
             WORKSPACE_PERSISTENT_KEYS_DEPRECATED,
@@ -141,6 +186,7 @@ export class PersistentStateFactory implements IPersistentStateFactory, IExtensi
     }
 
     private async cleanAllPersistentStates(): Promise<void> {
+        const clearCacheDirPromise = this.context ? clearCacheDirectory(this.context).catch() : Promise.resolve();
         await Promise.all(
             this._globalKeysStorage.value.map(async (keyContent) => {
                 const storage = this.createGlobalPersistentState(keyContent.key);
@@ -155,6 +201,7 @@ export class PersistentStateFactory implements IPersistentStateFactory, IExtensi
         );
         await this._globalKeysStorage.updateValue([]);
         await this._workspaceKeysStorage.updateValue([]);
+        await clearCacheDirPromise;
         this.cmdManager?.executeCommand('workbench.action.reloadWindow').then(noop);
     }
 }

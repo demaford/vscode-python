@@ -4,20 +4,12 @@
 'use strict';
 
 import { l10n } from 'vscode';
+import { Commands } from '../constants';
 
 /* eslint-disable @typescript-eslint/no-namespace, no-shadow */
 
 // External callers of localize use these tables to retrieve localized values.
 export namespace Diagnostics {
-    export const warnSourceMaps = l10n.t(
-        'Source map support is enabled in the Python Extension, this will adversely impact performance of the extension.',
-    );
-    export const disableSourceMaps = l10n.t('Disable Source Map Support');
-
-    export const warnBeforeEnablingSourceMaps = l10n.t(
-        'Enabling source map support in the Python Extension will adversely impact performance of the extension.',
-    );
-    export const enableSourceMapsAndReloadVSC = l10n.t('Enable and reload Window.');
     export const lsNotSupported = l10n.t(
         'Your operating system does not meet the minimum requirements of the Python Language Server. Reverting to the alternative autocompletion provider, Jedi.',
     );
@@ -39,11 +31,14 @@ export namespace Diagnostics {
         'Your settings needs to be updated to change the setting "python.unitTest." to "python.testing.", otherwise testing Python code using the extension may not work. Would you like to automatically update your settings now?',
     );
     export const updateSettings = l10n.t('Yes, update settings');
-    export const checkIsort5UpgradeGuide = l10n.t(
-        'We found outdated configuration for sorting imports in this workspace. Check the [isort upgrade guide](https://aka.ms/AA9j5x4) to update your settings.',
-    );
     export const pylanceDefaultMessage = l10n.t(
         "The Python extension now includes Pylance to improve completions, code navigation, overall performance and much more! You can learn more about the update and learn how to change your language server [here](https://aka.ms/new-python-bundle).\n\nRead Pylance's license [here](https://marketplace.visualstudio.com/items/ms-python.vscode-pylance/license).",
+    );
+    export const invalidSmartSendMessage = l10n.t(
+        `Python is unable to parse the code provided. Please
+    turn off Smart Send if you wish to always run line by line or explicitly select code
+    to force run. See [logs](command:{0}) for more details`,
+        Commands.ViewOutput,
     );
 }
 
@@ -64,6 +59,7 @@ export namespace Common {
     export const noIWillDoItLater = l10n.t('No, I will do it later');
     export const notNow = l10n.t('Not now');
     export const doNotShowAgain = l10n.t("Don't show again");
+    export const editSomething = l10n.t('Edit {0}');
     export const reload = l10n.t('Reload');
     export const moreInfo = l10n.t('More Info');
     export const learnMore = l10n.t('Learn more');
@@ -94,6 +90,10 @@ export namespace AttachProcess {
     export const refreshList = l10n.t('Refresh process list');
 }
 
+export namespace Repl {
+    export const disableSmartSend = l10n.t('Disable Smart Send');
+    export const launchNativeRepl = l10n.t('Launch VS Code Native REPL');
+}
 export namespace Pylance {
     export const remindMeLater = l10n.t('Remind me later');
 
@@ -139,8 +139,6 @@ export namespace TensorBoard {
     export const upgradePrompt = l10n.t(
         'Integrated TensorBoard support is only available for TensorBoard >= 2.4.1. Would you like to upgrade your copy of TensorBoard?',
     );
-    export const launchNativeTensorBoardSessionCodeLens = l10n.t('▶ Launch TensorBoard Session');
-    export const launchNativeTensorBoardSessionCodeAction = l10n.t('Launch TensorBoard session');
     export const missingSourceFile = l10n.t(
         'The Python extension could not locate the requested source file on disk. Please manually specify the file.',
     );
@@ -199,7 +197,12 @@ export namespace Interpreters {
     export const activatingTerminals = l10n.t('Reactivating terminals...');
     export const activateTerminalDescription = l10n.t('Activated environment for');
     export const terminalEnvVarCollectionPrompt = l10n.t(
-        'The Python extension automatically activates all terminals using the selected environment, even when the name of the environment{0} is not present in the terminal prompt. [Learn more](https://aka.ms/vscodePythonTerminalActivation).',
+        '{0} environment was successfully activated, even though {1} indicator may not be present in the terminal prompt. [Learn more](https://aka.ms/vscodePythonTerminalActivation).',
+    );
+    export const terminalDeactivateProgress = l10n.t('Editing {0}...');
+    export const restartingTerminal = l10n.t('Restarting terminal and deactivating...');
+    export const terminalDeactivatePrompt = l10n.t(
+        'Deactivating virtual environments may not work by default. To make it work, edit your "{0}" and then restart your shell. [Learn more](https://aka.ms/AAmx2ft).',
     );
     export const activatedCondaEnvLaunch = l10n.t(
         'We noticed VS Code was launched from an activated conda environment, would you like to select it?',
@@ -246,6 +249,9 @@ export namespace InterpreterQuickPickList {
     };
     export const refreshInterpreterList = l10n.t('Refresh Interpreter list');
     export const refreshingInterpreterList = l10n.t('Refreshing Interpreter list...');
+    export const create = {
+        label: l10n.t('Create Virtual Environment...'),
+    };
 }
 
 export namespace OutputChannelNames {
@@ -415,7 +421,8 @@ export namespace Testing {
     export const cancelUnittestExecution = l10n.t('Canceled unittest test execution');
     export const errorUnittestExecution = l10n.t('Unittest test execution error');
     export const cancelPytestExecution = l10n.t('Canceled pytest test execution');
-    export const errorPytestExecution = l10n.t('Pytest test execution error');
+    export const errorPytestExecution = l10n.t('pytest test execution error');
+    export const copilotSetupMessage = l10n.t('Confirm your Python testing framework to enable test discovery.');
 }
 
 export namespace OutdatedDebugger {
@@ -464,8 +471,10 @@ export namespace CreateEnv {
         export const error = l10n.t('Creating virtual environment failed with error.');
         export const tomlExtrasQuickPickTitle = l10n.t('Select optional dependencies to install from pyproject.toml');
         export const requirementsQuickPickTitle = l10n.t('Select dependencies to install');
-        export const recreate = l10n.t('Recreate');
-        export const recreateDescription = l10n.t('Delete existing ".venv" environment and create a new one');
+        export const recreate = l10n.t('Delete and Recreate');
+        export const recreateDescription = l10n.t(
+            'Delete existing ".venv" directory and create a new ".venv" environment',
+        );
         export const useExisting = l10n.t('Use Existing');
         export const useExistingDescription = l10n.t('Use existing ".venv" environment with no changes to it');
         export const existingVenvQuickPickPlaceholder = l10n.t(
@@ -473,6 +482,7 @@ export namespace CreateEnv {
         );
         export const deletingEnvironmentProgress = l10n.t('Deleting existing ".venv" environment...');
         export const errorDeletingEnvironment = l10n.t('Error while deleting existing ".venv" environment.');
+        export const openRequirementsFile = l10n.t('Open requirements file');
     }
 
     export namespace Conda {
@@ -485,40 +495,26 @@ export namespace CreateEnv {
         );
         export const creating = l10n.t('Creating conda environment...');
         export const providerDescription = l10n.t('Creates a `.conda` Conda environment in the current workspace');
+
+        export const recreate = l10n.t('Delete and Recreate');
+        export const recreateDescription = l10n.t('Delete existing ".conda" environment and create a new one');
+        export const useExisting = l10n.t('Use Existing');
+        export const useExistingDescription = l10n.t('Use existing ".conda" environment with no changes to it');
+        export const existingCondaQuickPickPlaceholder = l10n.t(
+            'Choose an option to handle the existing ".conda" environment',
+        );
+        export const deletingEnvironmentProgress = l10n.t('Deleting existing ".conda" environment...');
+        export const errorDeletingEnvironment = l10n.t('Error while deleting existing ".conda" environment.');
     }
-}
 
-export namespace ToolsExtensions {
-    export const flake8PromptMessage = l10n.t(
-        'Use the Flake8 extension to enable easier configuration and new features such as quick fixes.',
-    );
-    export const pylintPromptMessage = l10n.t(
-        'Use the Pylint extension to enable easier configuration and new features such as quick fixes.',
-    );
-    export const isortPromptMessage = l10n.t(
-        'To use sort imports, install the isort extension. It provides easier configuration and new features such as code actions.',
-    );
-    export const installPylintExtension = l10n.t('Install Pylint extension');
-    export const installFlake8Extension = l10n.t('Install Flake8 extension');
-    export const installISortExtension = l10n.t('Install isort extension');
+    export namespace Trigger {
+        export const workspaceTriggerMessage = l10n.t(
+            'A virtual environment is not currently selected for your Python interpreter. Would you like to create a virtual environment?',
+        );
+        export const createEnvironment = l10n.t('Create');
 
-    export const selectBlackFormatterPrompt = l10n.t(
-        'You have the Black formatter extension installed, would you like to use that as the default formatter?',
-    );
-
-    export const selectAutopep8FormatterPrompt = l10n.t(
-        'You have the Autopep8 formatter extension installed, would you like to use that as the default formatter?',
-    );
-
-    export const selectMultipleFormattersPrompt = l10n.t(
-        'You have multiple formatters installed, would you like to select one as the default formatter?',
-    );
-
-    export const installBlackFormatterPrompt = l10n.t(
-        'You triggered formatting with Black, would you like to install one of our new formatter extensions? This will also set it as the default formatter for Python.',
-    );
-
-    export const installAutopep8FormatterPrompt = l10n.t(
-        'You triggered formatting with Autopep8, would you like to install one of our new formatter extension? This will also set it as the default formatter for Python.',
-    );
+        export const globalPipInstallTriggerMessage = l10n.t(
+            'You may have installed Python packages into your global environment, which can cause conflicts between package versions. Would you like to create a virtual environment with these packages to isolate your dependencies?',
+        );
+    }
 }

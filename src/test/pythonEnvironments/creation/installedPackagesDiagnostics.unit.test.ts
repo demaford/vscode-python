@@ -10,14 +10,15 @@ import * as cmdApis from '../../../client/common/vscodeApis/commandApis';
 import * as workspaceApis from '../../../client/common/vscodeApis/workspaceApis';
 import * as languageApis from '../../../client/common/vscodeApis/languageApis';
 import * as windowApis from '../../../client/common/vscodeApis/windowApis';
-import { IDisposableRegistry, IInterpreterPathService } from '../../../client/common/types';
+import { IDisposableRegistry } from '../../../client/common/types';
 import * as installUtils from '../../../client/pythonEnvironments/creation/common/installCheckUtils';
 import {
     DEPS_NOT_INSTALLED_KEY,
     registerInstalledPackagesDiagnosticsProvider,
 } from '../../../client/pythonEnvironments/creation/installedPackagesDiagnostic';
+import { IInterpreterService } from '../../../client/interpreter/contracts';
 
-chaiUse(chaiAsPromised);
+chaiUse(chaiAsPromised.default);
 
 class FakeDisposable {
     public dispose() {
@@ -62,7 +63,7 @@ function getPyProjectTomlFile(): typemoq.IMock<TextDocument> {
         .setup((p) => p.getText(typemoq.It.isAny()))
         .returns(
             () =>
-                '[build-system]\nrequires = ["flit_core >=3.2,<4"]\nbuild-backend = "flit_core.buildapi"\n\n[project]\nname = "something"\nversion = "2023.0.0"\nrequires-python = ">=3.7"\ndependencies = ["attrs>=21.3.0", "flake8-csv"]\n    ',
+                '[build-system]\nrequires = ["flit_core >=3.2,<4"]\nbuild-backend = "flit_core.buildapi"\n\n[project]\nname = "something"\nversion = "2023.0.0"\nrequires-python = ">=3.8"\ndependencies = ["attrs>=21.3.0", "flake8-csv"]\n    ',
         );
     return someFile;
 }
@@ -76,7 +77,7 @@ function getSomeTomlFile(): typemoq.IMock<TextDocument> {
         .setup((p) => p.getText(typemoq.It.isAny()))
         .returns(
             () =>
-                '[build-system]\nrequires = ["flit_core >=3.2,<4"]\nbuild-backend = "flit_core.buildapi"\n\n[something]\nname = "something"\nversion = "2023.0.0"\nrequires-python = ">=3.7"\ndependencies = ["attrs>=21.3.0", "flake8-csv"]\n    ',
+                '[build-system]\nrequires = ["flit_core >=3.2,<4"]\nbuild-backend = "flit_core.buildapi"\n\n[something]\nname = "something"\nversion = "2023.0.0"\nrequires-python = ">=3.8"\ndependencies = ["attrs>=21.3.0", "flake8-csv"]\n    ',
         );
     return someFile;
 }
@@ -95,7 +96,7 @@ suite('Create Env content button settings tests', () => {
     let getActiveTextEditorStub: sinon.SinonStub;
     let textEditor: typemoq.IMock<TextEditor>;
     let getInstalledPackagesDiagnosticsStub: sinon.SinonStub;
-    let interpreterPathService: typemoq.IMock<IInterpreterPathService>;
+    let interpreterService: typemoq.IMock<IInterpreterService>;
 
     setup(() => {
         executeCommandStub = sinon.stub(cmdApis, 'executeCommand');
@@ -127,9 +128,9 @@ suite('Create Env content button settings tests', () => {
         getActiveTextEditorStub.returns(textEditor.object);
 
         getInstalledPackagesDiagnosticsStub = sinon.stub(installUtils, 'getInstalledPackagesDiagnostics');
-        interpreterPathService = typemoq.Mock.ofType<IInterpreterPathService>();
-        interpreterPathService
-            .setup((i) => i.onDidChange(typemoq.It.isAny(), undefined, undefined))
+        interpreterService = typemoq.Mock.ofType<IInterpreterService>();
+        interpreterService
+            .setup((i) => i.onDidChangeInterpreter(typemoq.It.isAny(), undefined, undefined))
             .returns(() => new FakeDisposable());
     });
 
@@ -139,7 +140,7 @@ suite('Create Env content button settings tests', () => {
     });
 
     test('Ensure nothing is run if there are no open documents', () => {
-        registerInstalledPackagesDiagnosticsProvider(disposables, interpreterPathService.object);
+        registerInstalledPackagesDiagnosticsProvider(disposables, interpreterService.object);
         assert.ok(executeCommandStub.notCalled);
         assert.ok(getInstalledPackagesDiagnosticsStub.notCalled);
     });
@@ -148,7 +149,7 @@ suite('Create Env content button settings tests', () => {
         const someFile = getSomeFile();
         const someTomlFile = getSomeTomlFile();
         getOpenTextDocumentsStub.returns([someFile.object, someTomlFile.object]);
-        registerInstalledPackagesDiagnosticsProvider(disposables, interpreterPathService.object);
+        registerInstalledPackagesDiagnosticsProvider(disposables, interpreterService.object);
         assert.ok(executeCommandStub.notCalled);
         assert.ok(getInstalledPackagesDiagnosticsStub.notCalled);
     });
@@ -157,7 +158,7 @@ suite('Create Env content button settings tests', () => {
         const reqFile = getSomeRequirementFile();
         const tomlFile = getPyProjectTomlFile();
         getOpenTextDocumentsStub.returns([reqFile.object, tomlFile.object]);
-        registerInstalledPackagesDiagnosticsProvider(disposables, interpreterPathService.object);
+        registerInstalledPackagesDiagnosticsProvider(disposables, interpreterService.object);
         assert.ok(getInstalledPackagesDiagnosticsStub.calledTwice);
     });
 
@@ -171,7 +172,7 @@ suite('Create Env content button settings tests', () => {
                 return new FakeDisposable();
             });
 
-            registerInstalledPackagesDiagnosticsProvider(disposables, interpreterPathService.object);
+            registerInstalledPackagesDiagnosticsProvider(disposables, interpreterService.object);
             getInstalledPackagesDiagnosticsStub.reset();
 
             getInstalledPackagesDiagnosticsStub.returns(Promise.resolve(MISSING_PACKAGES));
@@ -189,7 +190,7 @@ suite('Create Env content button settings tests', () => {
                 return new FakeDisposable();
             });
 
-            registerInstalledPackagesDiagnosticsProvider(disposables, interpreterPathService.object);
+            registerInstalledPackagesDiagnosticsProvider(disposables, interpreterService.object);
             getInstalledPackagesDiagnosticsStub.reset();
 
             getInstalledPackagesDiagnosticsStub.returns(Promise.resolve(MISSING_PACKAGES));
@@ -207,7 +208,7 @@ suite('Create Env content button settings tests', () => {
                 return new FakeDisposable();
             });
 
-            registerInstalledPackagesDiagnosticsProvider(disposables, interpreterPathService.object);
+            registerInstalledPackagesDiagnosticsProvider(disposables, interpreterService.object);
 
             diagnosticCollection.reset();
             diagnosticCollection.setup((d) => d.delete(typemoq.It.isAny())).verifiable(typemoq.Times.once());
@@ -229,7 +230,7 @@ suite('Create Env content button settings tests', () => {
                 return new FakeDisposable();
             });
 
-            registerInstalledPackagesDiagnosticsProvider(disposables, interpreterPathService.object);
+            registerInstalledPackagesDiagnosticsProvider(disposables, interpreterService.object);
 
             getActiveTextEditorStub.returns({ document: file });
             diagnosticCollection.setup((d) => d.get(typemoq.It.isAny())).returns(() => MISSING_PACKAGES);
@@ -247,7 +248,7 @@ suite('Create Env content button settings tests', () => {
                 return new FakeDisposable();
             });
 
-            registerInstalledPackagesDiagnosticsProvider(disposables, interpreterPathService.object);
+            registerInstalledPackagesDiagnosticsProvider(disposables, interpreterService.object);
 
             getActiveTextEditorStub.returns({ document: file });
             diagnosticCollection.setup((d) => d.get(typemoq.It.isAny())).returns(() => MISSING_PACKAGES);
@@ -267,7 +268,7 @@ suite('Create Env content button settings tests', () => {
                 return new FakeDisposable();
             });
 
-            registerInstalledPackagesDiagnosticsProvider(disposables, interpreterPathService.object);
+            registerInstalledPackagesDiagnosticsProvider(disposables, interpreterService.object);
             getInstalledPackagesDiagnosticsStub.reset();
 
             getInstalledPackagesDiagnosticsStub.returns(Promise.resolve(MISSING_PACKAGES));
@@ -285,7 +286,7 @@ suite('Create Env content button settings tests', () => {
                 return new FakeDisposable();
             });
 
-            registerInstalledPackagesDiagnosticsProvider(disposables, interpreterPathService.object);
+            registerInstalledPackagesDiagnosticsProvider(disposables, interpreterService.object);
             getInstalledPackagesDiagnosticsStub.reset();
 
             getInstalledPackagesDiagnosticsStub.returns(Promise.resolve(MISSING_PACKAGES));
@@ -303,7 +304,7 @@ suite('Create Env content button settings tests', () => {
                 return new FakeDisposable();
             });
 
-            registerInstalledPackagesDiagnosticsProvider(disposables, interpreterPathService.object);
+            registerInstalledPackagesDiagnosticsProvider(disposables, interpreterService.object);
 
             getActiveTextEditorStub.returns({ document: file });
             diagnosticCollection.setup((d) => d.get(typemoq.It.isAny())).returns(() => []);
@@ -321,7 +322,7 @@ suite('Create Env content button settings tests', () => {
                 return new FakeDisposable();
             });
 
-            registerInstalledPackagesDiagnosticsProvider(disposables, interpreterPathService.object);
+            registerInstalledPackagesDiagnosticsProvider(disposables, interpreterService.object);
 
             getActiveTextEditorStub.returns({ document: file });
             diagnosticCollection.setup((d) => d.get(typemoq.It.isAny())).returns(() => []);

@@ -26,7 +26,7 @@ export class InputFlowAction {
 }
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-export type InputStep<T extends any> = (input: MultiStepInput<T>, state: T) => Promise<InputStep<T> | void>;
+export type InputStep<T> = (input: MultiStepInput<T>, state: T) => Promise<InputStep<T> | void>;
 
 type buttonCallbackType<T extends QuickPickItem> = (quickPick: QuickPick<T>) => void;
 
@@ -47,7 +47,7 @@ export interface IQuickPickParameters<T extends QuickPickItem, E = any> {
     totalSteps?: number;
     canGoBack?: boolean;
     items: T[];
-    activeItem?: T | Promise<T>;
+    activeItem?: T | ((quickPick: QuickPick<T>) => Promise<T>);
     placeholder: string | undefined;
     customButtonSetups?: QuickInputButtonSetup[];
     matchOnDescription?: boolean;
@@ -156,7 +156,13 @@ export class MultiStepInput<S> implements IMultiStepInput<S> {
             initialize(input);
         }
         if (activeItem) {
-            input.activeItems = [await activeItem];
+            if (typeof activeItem === 'function') {
+                activeItem(input).then((item) => {
+                    if (input.activeItems.length === 0) {
+                        input.activeItems = [item];
+                    }
+                });
+            }
         } else {
             input.activeItems = [];
         }

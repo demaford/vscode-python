@@ -1,18 +1,22 @@
+/* eslint-disable @typescript-eslint/no-explicit-any */
 // Copyright (c) Microsoft Corporation. All rights reserved.
 // Licensed under the MIT License.
 
 import * as path from 'path';
-import * as fs from 'fs-extra';
 import { assert } from 'chai';
 import * as sinon from 'sinon';
+import * as fs from '../../../../../client/common/platform/fs-paths';
 import * as platformUtils from '../../../../../client/common/utils/platform';
 import { CondaEnvironmentLocator } from '../../../../../client/pythonEnvironments/base/locators/lowLevel/condaLocator';
 import { sleep } from '../../../../core';
 import { createDeferred, Deferred } from '../../../../../client/common/utils/async';
 import { PythonEnvsChangedEvent } from '../../../../../client/pythonEnvironments/base/watcher';
-import { TEST_TIMEOUT } from '../../../../constants';
+import { EXTENSION_ROOT_DIR_FOR_TESTS, TEST_TIMEOUT } from '../../../../constants';
 import { traceWarn } from '../../../../../client/logging';
 import { TEST_LAYOUT_ROOT } from '../../../common/commonTestConstants';
+import { PYTHON_VIRTUAL_ENVS_LOCATION } from '../../../../ciConstants';
+import { isCI } from '../../../../../client/common/constants';
+import * as externalDependencies from '../../../../../client/pythonEnvironments/common/externalDependencies';
 
 class CondaEnvs {
     private readonly condaEnvironmentsTxt;
@@ -50,9 +54,13 @@ class CondaEnvs {
     }
 }
 
-suite('Conda Env Watcher', async () => {
+suite('Conda Env Locator', async () => {
     let locator: CondaEnvironmentLocator;
     let condaEnvsTxt: CondaEnvs;
+    const envsLocation =
+        PYTHON_VIRTUAL_ENVS_LOCATION !== undefined
+            ? path.join(EXTENSION_ROOT_DIR_FOR_TESTS, PYTHON_VIRTUAL_ENVS_LOCATION)
+            : path.join(EXTENSION_ROOT_DIR_FOR_TESTS, 'src', 'tmp', 'envPaths.json');
 
     async function waitForChangeToBeDetected(deferred: Deferred<void>) {
         const timeout = setTimeout(() => {
@@ -61,11 +69,21 @@ suite('Conda Env Watcher', async () => {
         }, TEST_TIMEOUT);
         await deferred.promise;
     }
+    let envPaths: any;
+
+    suiteSetup(async () => {
+        if (isCI) {
+            envPaths = await fs.readJson(envsLocation);
+        }
+    });
 
     setup(async () => {
         sinon.stub(platformUtils, 'getUserHomeDir').returns(TEST_LAYOUT_ROOT);
         condaEnvsTxt = new CondaEnvs();
         await condaEnvsTxt.cleanUp();
+        if (isCI) {
+            sinon.stub(externalDependencies, 'getPythonSetting').returns(envPaths.condaExecPath);
+        }
     });
 
     async function setupLocator(onChanged: (e: PythonEnvsChangedEvent) => Promise<void>) {

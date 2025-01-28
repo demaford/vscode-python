@@ -22,6 +22,7 @@ import * as platform from '../../../../../client/common/utils/platform';
 import * as windowApis from '../../../../../client/common/vscodeApis/windowApis';
 import * as workspaceApis from '../../../../../client/common/vscodeApis/workspaceApis';
 import { IEnvironmentActivationService } from '../../../../../client/interpreter/activation/types';
+import * as triggerApis from '../../../../../client/pythonEnvironments/creation/createEnvironmentTrigger';
 
 getInfoPerOS().forEach(([osName, osType, path]) => {
     if (osType === platform.OSType.Unknown) {
@@ -42,12 +43,18 @@ getInfoPerOS().forEach(([osName, osType, path]) => {
         let getActiveTextEditorStub: sinon.SinonStub;
         let getOSTypeStub: sinon.SinonStub;
         let getWorkspaceFolderStub: sinon.SinonStub;
+        let triggerCreateEnvironmentCheckNonBlockingStub: sinon.SinonStub;
 
         setup(() => {
             getActiveTextEditorStub = sinon.stub(windowApis, 'getActiveTextEditor');
             getOSTypeStub = sinon.stub(platform, 'getOSType');
             getWorkspaceFolderStub = sinon.stub(workspaceApis, 'getWorkspaceFolders');
             getOSTypeStub.returns(osType);
+            triggerCreateEnvironmentCheckNonBlockingStub = sinon.stub(
+                triggerApis,
+                'triggerCreateEnvironmentCheckNonBlocking',
+            );
+            triggerCreateEnvironmentCheckNonBlockingStub.returns(undefined);
         });
 
         teardown(() => {
@@ -761,78 +768,11 @@ getInfoPerOS().forEach(([osName, osType, path]) => {
             expect(debugConfig).to.have.property('redirectOutput', true);
             expect(debugConfig).to.have.property('justMyCode', false);
             expect(debugConfig).to.have.property('debugOptions');
-            const expectedOptions = [
-                DebugOptions.DebugStdLib,
-                DebugOptions.ShowReturnValue,
-                DebugOptions.RedirectOutput,
-            ];
+            const expectedOptions = [DebugOptions.ShowReturnValue, DebugOptions.RedirectOutput];
             if (osType === platform.OSType.Windows) {
                 expectedOptions.push(DebugOptions.FixFilePathCase);
             }
             expect((debugConfig as DebugConfiguration).debugOptions).to.be.deep.equal(expectedOptions);
-        });
-
-        const testsForJustMyCode = [
-            {
-                justMyCode: false,
-                debugStdLib: true,
-                expectedResult: false,
-            },
-            {
-                justMyCode: false,
-                debugStdLib: false,
-                expectedResult: false,
-            },
-            {
-                justMyCode: false,
-                debugStdLib: undefined,
-                expectedResult: false,
-            },
-            {
-                justMyCode: true,
-                debugStdLib: false,
-                expectedResult: true,
-            },
-            {
-                justMyCode: true,
-                debugStdLib: true,
-                expectedResult: true,
-            },
-            {
-                justMyCode: true,
-                debugStdLib: undefined,
-                expectedResult: true,
-            },
-            {
-                justMyCode: undefined,
-                debugStdLib: false,
-                expectedResult: true,
-            },
-            {
-                justMyCode: undefined,
-                debugStdLib: true,
-                expectedResult: false,
-            },
-            {
-                justMyCode: undefined,
-                debugStdLib: undefined,
-                expectedResult: true,
-            },
-        ];
-        test('Ensure justMyCode property is correctly derived from debugStdLib', async () => {
-            const pythonPath = `PythonPath_${new Date().toString()}`;
-            const workspaceFolder = createMoqWorkspaceFolder(__dirname);
-            const pythonFile = 'xyz.py';
-            setupIoc(pythonPath);
-            setupActiveEditor(pythonFile, PYTHON_LANGUAGE);
-            testsForJustMyCode.forEach(async (testParams) => {
-                const debugConfig = await resolveDebugConfiguration(workspaceFolder, {
-                    ...launch,
-                    debugStdLib: testParams.debugStdLib,
-                    justMyCode: testParams.justMyCode,
-                });
-                expect(debugConfig).to.have.property('justMyCode', testParams.expectedResult);
-            });
         });
 
         const testsForRedirectOutput = [

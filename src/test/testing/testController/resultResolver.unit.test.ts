@@ -14,6 +14,7 @@ import {
 import * as testItemUtilities from '../../../client/testing/testController/common/testItemUtilities';
 import * as ResultResolver from '../../../client/testing/testController/common/resultResolver';
 import * as util from '../../../client/testing/testController/common/utils';
+import { traceLog } from '../../../client/logging';
 
 suite('Result Resolver tests', () => {
     suite('Test discovery', () => {
@@ -126,7 +127,7 @@ suite('Result Resolver tests', () => {
             const createErrorTestItemStub = sinon.stub(testItemUtilities, 'createErrorTestItem').returns(blankTestItem);
 
             // call resolve discovery
-            resultResolver.resolveDiscovery(payload);
+            resultResolver.resolveDiscovery(payload, cancelationToken);
 
             // assert the stub functions were called with the correct parameters
 
@@ -189,6 +190,67 @@ suite('Result Resolver tests', () => {
                 resultResolver, // resultResolver
                 cancelationToken, // token
             );
+        });
+        test('resolveDiscovery should create error and not clear test items to allow for error tolerant discovery', async () => {
+            // test specific constants used expected values
+            testProvider = 'pytest';
+            workspaceUri = Uri.file('/foo/bar');
+            resultResolver = new ResultResolver.PythonResultResolver(testController, testProvider, workspaceUri);
+            const errorMessage = 'error msg A';
+            const expectedErrorMessage = `${defaultErrorMessage}\r\n ${errorMessage}`;
+
+            // create test result node
+            const tests: DiscoveredTestNode = {
+                path: 'path',
+                name: 'name',
+                type_: 'folder',
+                id_: 'id',
+                children: [],
+            };
+            // stub out return values of functions called in resolveDiscovery
+            const errorPayload: DiscoveredTestPayload = {
+                cwd: workspaceUri.fsPath,
+                status: 'error',
+                error: [errorMessage],
+            };
+            const regPayload: DiscoveredTestPayload = {
+                cwd: workspaceUri.fsPath,
+                status: 'success',
+                error: [errorMessage],
+                tests,
+            };
+            const errorTestItemOptions: testItemUtilities.ErrorTestItemOptions = {
+                id: 'id',
+                label: 'label',
+                error: 'error',
+            };
+
+            // stub out functionality of buildErrorNodeOptions and createErrorTestItem which are called in resolveDiscovery
+            const buildErrorNodeOptionsStub = sinon.stub(util, 'buildErrorNodeOptions').returns(errorTestItemOptions);
+            const createErrorTestItemStub = sinon.stub(testItemUtilities, 'createErrorTestItem').returns(blankTestItem);
+
+            // stub out functionality of populateTestTreeStub which is called in resolveDiscovery
+            sinon.stub(util, 'populateTestTree').returns();
+            // add spies to insure these aren't called
+            const deleteSpy = sinon.spy(testController.items, 'delete');
+            const replaceSpy = sinon.spy(testController.items, 'replace');
+            // call resolve discovery
+            resultResolver.resolveDiscovery(regPayload, cancelationToken);
+            resultResolver.resolveDiscovery(errorPayload, cancelationToken);
+
+            // assert the stub functions were called with the correct parameters
+
+            // builds an error node root
+            sinon.assert.calledWithMatch(buildErrorNodeOptionsStub, workspaceUri, expectedErrorMessage, testProvider);
+            // builds an error item
+            sinon.assert.calledWithMatch(createErrorTestItemStub, sinon.match.any, sinon.match.any);
+
+            if (!deleteSpy.calledOnce) {
+                throw new Error("The delete method was called, but it shouldn't have been.");
+            }
+            if (replaceSpy.called) {
+                throw new Error("The replace method was called, but it shouldn't have been.");
+            }
         });
     });
     suite('Test execution result resolver', () => {
@@ -270,22 +332,25 @@ suite('Result Resolver tests', () => {
                 testProvider,
                 workspaceUri,
             );
-            const mockSubtestItem = createMockTestItem('parentTest subTest');
+            const subtestName = 'parentTest [subTest with spaces and [brackets]]';
+            const mockSubtestItem = createMockTestItem(subtestName);
             // add a mock test item to the map of known VSCode ids to run ids
             resultResolver.runIdToVSid.set('mockTestItem2', 'mockTestItem2');
             // creates a mock test item with a space which will be used to split the runId
-            resultResolver.runIdToVSid.set('parentTest subTest', 'parentTest subTest');
+            resultResolver.runIdToVSid.set(subtestName, subtestName);
 
             // add this mock test to the map of known test items
             resultResolver.runIdToTestItem.set('parentTest', mockTestItem2);
-            resultResolver.runIdToTestItem.set('parentTest subTest', mockSubtestItem);
+            resultResolver.runIdToTestItem.set(subtestName, mockSubtestItem);
 
             let generatedId: string | undefined;
+            let generatedUri: Uri | undefined;
             testControllerMock
-                .setup((t) => t.createTestItem(typemoq.It.isAny(), typemoq.It.isAny()))
+                .setup((t) => t.createTestItem(typemoq.It.isAny(), typemoq.It.isAny(), typemoq.It.isAny()))
                 .callback((id: string) => {
                     generatedId = id;
-                    console.log('createTestItem function called with id:', id);
+                    generatedUri = workspaceUri;
+                    traceLog('createTestItem function called with id:', id);
                 })
                 .returns(() => ({ id: 'id_this', label: 'label_this', uri: workspaceUri } as TestItem));
 
@@ -294,12 +359,12 @@ suite('Result Resolver tests', () => {
                 cwd: workspaceUri.fsPath,
                 status: 'success',
                 result: {
-                    'parentTest subTest': {
-                        test: 'test',
+                    'parentTest [subTest with spaces and [brackets]]': {
+                        test: 'parentTest',
                         outcome: 'subtest-success', // failure, passed-unexpected, skipped, success, expected-failure, subtest-failure, subtest-succcess
                         message: 'message',
                         traceback: 'traceback',
-                        subtest: 'subtest',
+                        subtest: subtestName,
                     },
                 },
                 error: '',
@@ -310,7 +375,8 @@ suite('Result Resolver tests', () => {
 
             // verify that the passed function was called for the single test item
             assert.ok(generatedId);
-            assert.strictEqual(generatedId, 'subTest');
+            assert.strictEqual(generatedUri, workspaceUri);
+            assert.strictEqual(generatedId, '[subTest with spaces and [brackets]]');
         });
         test('resolveExecution handles failed tests correctly', async () => {
             // test specific constants used expected values

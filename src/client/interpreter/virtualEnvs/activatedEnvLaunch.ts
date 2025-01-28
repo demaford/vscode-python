@@ -1,7 +1,7 @@
 // Copyright (c) Microsoft Corporation. All rights reserved.
 // Licensed under the MIT License.
 
-import { inject, injectable, optional } from 'inversify';
+import { inject, injectable } from 'inversify';
 import { ConfigurationTarget } from 'vscode';
 import * as path from 'path';
 import { IApplicationShell, IWorkspaceService } from '../../common/application/types';
@@ -29,7 +29,7 @@ export class ActivatedEnvironmentLaunch implements IActivatedEnvironmentLaunch {
         private readonly pythonPathUpdaterService: IPythonPathUpdaterServiceManager,
         @inject(IInterpreterService) private readonly interpreterService: IInterpreterService,
         @inject(IProcessServiceFactory) private readonly processServiceFactory: IProcessServiceFactory,
-        @optional() public wasSelected: boolean = false,
+        public wasSelected: boolean = false,
     ) {}
 
     @cache(-1, true)
@@ -91,9 +91,9 @@ export class ActivatedEnvironmentLaunch implements IActivatedEnvironmentLaunch {
         }
         if (process.env.VSCODE_CLI !== '1') {
             // We only want to select the interpreter if VS Code was launched from the command line.
-            traceVerbose('VS Code was not launched from the command line, not selecting activated interpreter');
             return undefined;
         }
+        traceVerbose('VS Code was not launched from the command line');
         const prefix = await this.getPrefixOfSelectedActivatedEnv();
         if (!prefix) {
             this._promptIfApplicable().ignoreErrors();

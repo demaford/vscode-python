@@ -5,7 +5,6 @@ import {
     IBrowserService,
     IConfigurationService,
     ICurrentProcess,
-    IEditorUtils,
     IExperimentService,
     IExtensions,
     IInstaller,
@@ -51,7 +50,6 @@ import {
 import { WorkspaceService } from './application/workspace';
 import { ConfigurationService } from './configuration/service';
 import { PipEnvExecutionPath } from './configuration/executionSettings/pipEnvExecution';
-import { EditorUtils } from './editor';
 import { ExperimentService } from './experiments/service';
 import { ProductInstaller } from './installer/productInstaller';
 import { InterpreterPathService } from './interpreterPathService';
@@ -90,7 +88,8 @@ import { Random } from './utils/random';
 import { ContextKeyManager } from './application/contextKeyManager';
 import { CreatePythonFileCommandHandler } from './application/commands/createPythonFile';
 import { RequireJupyterPrompt } from '../jupyter/requireJupyterPrompt';
-import { isWindows } from './platform/platformService';
+import { isWindows } from './utils/platform';
+import { PixiActivationCommandProvider } from './terminal/environmentActivationProviders/pixiActivationProvider';
 
 export function registerTypes(serviceManager: IServiceManager): void {
     serviceManager.addSingletonInstance<boolean>(IsWindows, isWindows());
@@ -130,7 +129,6 @@ export function registerTypes(serviceManager: IServiceManager): void {
     serviceManager.addSingleton<IApplicationEnvironment>(IApplicationEnvironment, ApplicationEnvironment);
     serviceManager.addSingleton<ILanguageService>(ILanguageService, LanguageService);
     serviceManager.addSingleton<IBrowserService>(IBrowserService, BrowserService);
-    serviceManager.addSingleton<IEditorUtils>(IEditorUtils, EditorUtils);
     serviceManager.addSingleton<ITerminalActivator>(ITerminalActivator, TerminalActivator);
     serviceManager.addSingleton<ITerminalActivationHandler>(
         ITerminalActivationHandler,
@@ -163,6 +161,11 @@ export function registerTypes(serviceManager: IServiceManager): void {
         ITerminalActivationCommandProvider,
         CondaActivationCommandProvider,
         TerminalActivationProviders.conda,
+    );
+    serviceManager.addSingleton<ITerminalActivationCommandProvider>(
+        ITerminalActivationCommandProvider,
+        PixiActivationCommandProvider,
+        TerminalActivationProviders.pixi,
     );
     serviceManager.addSingleton<ITerminalActivationCommandProvider>(
         ITerminalActivationCommandProvider,

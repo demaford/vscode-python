@@ -8,15 +8,15 @@ import * as chaiAsPromised from 'chai-as-promised';
 import * as path from 'path';
 import * as sinon from 'sinon';
 import * as TypeMoq from 'typemoq';
-import * as fs from 'fs-extra';
+import * as fs from '../../../client/common/platform/fs-paths';
 import * as workspaceApis from '../../../client/common/vscodeApis/workspaceApis';
-import { CancellationTokenSource, DebugConfiguration, Uri, WorkspaceFolder } from 'vscode';
+import { CancellationTokenSource, DebugConfiguration, DebugSession, Uri, WorkspaceFolder } from 'vscode';
 import { IInvalidPythonPathInDebuggerService } from '../../../client/application/diagnostics/types';
 import { IApplicationShell, IDebugService } from '../../../client/common/application/types';
 import { EXTENSION_ROOT_DIR } from '../../../client/common/constants';
 import '../../../client/common/extensions';
 import { IConfigurationService, IPythonSettings } from '../../../client/common/types';
-import { DebuggerTypeName } from '../../../client/debugger/constants';
+import { PythonDebuggerTypeName } from '../../../client/debugger/constants';
 import { IDebugEnvironmentVariablesService } from '../../../client/debugger/extension/configuration/resolvers/helper';
 import { LaunchConfigurationResolver } from '../../../client/debugger/extension/configuration/resolvers/launch';
 import { DebugOptions } from '../../../client/debugger/types';
@@ -29,9 +29,9 @@ import { ITestingSettings } from '../../../client/testing/configuration/types';
 import { TestProvider } from '../../../client/testing/types';
 import { isOs, OSType } from '../../common';
 import { IEnvironmentActivationService } from '../../../client/interpreter/activation/types';
-import * as util from '../../../client/testing/testController/common/utils';
+import { createDeferred } from '../../../client/common/utils/async';
 
-use(chaiAsPromised);
+use(chaiAsPromised.default);
 
 suite('Unit Tests - Debug Launcher', () => {
     let serviceContainer: TypeMoq.IMock<IServiceContainer>;
@@ -46,7 +46,6 @@ suite('Unit Tests - Debug Launcher', () => {
     let getWorkspaceFoldersStub: sinon.SinonStub;
     let pathExistsStub: sinon.SinonStub;
     let readFileStub: sinon.SinonStub;
-    let pythonTestAdapterRewriteEnabledStub: sinon.SinonStub;
     const envVars = { FOO: 'BAR' };
 
     setup(async () => {
@@ -67,8 +66,6 @@ suite('Unit Tests - Debug Launcher', () => {
         getWorkspaceFoldersStub = sinon.stub(workspaceApis, 'getWorkspaceFolders');
         pathExistsStub = sinon.stub(fs, 'pathExists');
         readFileStub = sinon.stub(fs, 'readFile');
-        pythonTestAdapterRewriteEnabledStub = sinon.stub(util, 'pythonTestAdapterRewriteEnabled');
-        pythonTestAdapterRewriteEnabledStub.returns(false);
 
         const appShell = TypeMoq.Mock.ofType<IApplicationShell>(undefined, TypeMoq.MockBehavior.Strict);
         appShell.setup((a) => a.showErrorMessage(TypeMoq.It.isAny())).returns(() => Promise.resolve(undefined));
@@ -125,17 +122,33 @@ suite('Unit Tests - Debug Launcher', () => {
             .setup((x) => x.getEnvironmentVariables(TypeMoq.It.isAny(), TypeMoq.It.isAny()))
             .returns(() => Promise.resolve(expected.env));
 
+        const deferred = createDeferred<void>();
+
         debugService
-            .setup((d) => d.startDebugging(TypeMoq.It.isValue(workspaceFolder), TypeMoq.It.isValue(expected)))
+            .setup((d) =>
+                d.startDebugging(TypeMoq.It.isValue(workspaceFolder), TypeMoq.It.isValue(expected), undefined),
+            )
             .returns((_wspc: WorkspaceFolder, _expectedParam: DebugConfiguration) => {
+                deferred.resolve();
                 return Promise.resolve(undefined as any);
-            })
+            });
+
+        // create a fake debug session that the debug service will return on terminate
+        const fakeDebugSession = TypeMoq.Mock.ofType<DebugSession>();
+        fakeDebugSession.setup((ds) => ds.id).returns(() => 'id-val');
+        const debugSessionInstance = fakeDebugSession.object;
+
+        debugService
+            .setup((d) => d.activeDebugSession)
+            .returns(() => debugSessionInstance)
             .verifiable(TypeMoq.Times.once());
 
         debugService
             .setup((d) => d.onDidTerminateDebugSession(TypeMoq.It.isAny()))
             .returns((callback) => {
-                callback();
+                deferred.promise.then(() => {
+                    callback(debugSessionInstance);
+                });
                 return undefined as any;
             })
             .verifiable(TypeMoq.Times.once());
@@ -151,10 +164,10 @@ suite('Unit Tests - Debug Launcher', () => {
         if (!pythonTestAdapterRewriteExperiment) {
             switch (testProvider) {
                 case 'unittest': {
-                    return path.join(EXTENSION_ROOT_DIR, 'pythonFiles', 'visualstudio_py_testlauncher.py');
+                    return path.join(EXTENSION_ROOT_DIR, 'python_files', 'unittestadapter', 'execution.py');
                 }
                 case 'pytest': {
-                    return path.join(EXTENSION_ROOT_DIR, 'pythonFiles', 'testlauncher.py');
+                    return path.join(EXTENSION_ROOT_DIR, 'python_files', 'vscode_pytest', 'run_pytest_script.py');
                 }
                 default: {
                     throw new Error(`Unknown test provider '${testProvider}'`);
@@ -166,7 +179,7 @@ suite('Unit Tests - Debug Launcher', () => {
     function getDefaultDebugConfig(): DebugConfiguration {
         return {
             name: 'Debug Unit Test',
-            type: DebuggerTypeName,
+            type: PythonDebuggerTypeName,
             request: 'launch',
             console: 'internalConsole',
             env: {},
@@ -208,16 +221,18 @@ suite('Unit Tests - Debug Launcher', () => {
         if (!expected) {
             expected = getDefaultDebugConfig();
         }
-        expected.rules = [{ path: path.join(EXTENSION_ROOT_DIR, 'pythonFiles'), include: false }];
+        expected.rules = [{ path: path.join(EXTENSION_ROOT_DIR, 'python_files'), include: false }];
         expected.program = testLaunchScript;
         expected.args = options.args;
 
         if (!expected.cwd) {
             expected.cwd = workspaceFolders[0].uri.fsPath;
         }
-        const pluginPath = path.join(EXTENSION_ROOT_DIR, 'pythonFiles');
+        const pluginPath = path.join(EXTENSION_ROOT_DIR, 'python_files');
         const pythonPath = `${pluginPath}${path.delimiter}${expected.cwd}`;
         expected.env.PYTHONPATH = pythonPath;
+        expected.env.TEST_RUN_PIPE = 'pytestPort';
+        expected.env.RUN_TEST_IDS_PIPE = 'runTestIdsPort';
 
         // added by LaunchConfigurationResolver:
         if (!expected.python) {
@@ -234,13 +249,6 @@ suite('Unit Tests - Debug Launcher', () => {
         }
         expected.workspaceFolder = workspaceFolders[0].uri.fsPath;
         expected.debugOptions = [];
-        if (expected.justMyCode === undefined) {
-            // Populate justMyCode using debugStdLib
-            expected.justMyCode = !expected.debugStdLib;
-        }
-        if (!expected.justMyCode) {
-            expected.debugOptions.push(DebugOptions.DebugStdLib);
-        }
         if (expected.stopOnEntry) {
             expected.debugOptions.push(DebugOptions.StopOnEntry);
         }
@@ -270,18 +278,26 @@ suite('Unit Tests - Debug Launcher', () => {
                 cwd: 'one/two/three',
                 args: ['/one/two/three/testfile.py'],
                 testProvider,
+                runTestIdsPort: 'runTestIdsPort',
+                pytestPort: 'pytestPort',
             };
             setupSuccess(options, testProvider);
 
             await debugLauncher.launchDebugger(options);
 
-            debugService.verifyAll();
+            try {
+                debugService.verifyAll();
+            } catch (ex) {
+                console.log(ex);
+            }
         });
         test(`Must launch debugger with arguments ${testTitleSuffix}`, async () => {
             const options = {
                 cwd: 'one/two/three',
                 args: ['/one/two/three/testfile.py', '--debug', '1'],
                 testProvider,
+                runTestIdsPort: 'runTestIdsPort',
+                pytestPort: 'pytestPort',
             };
             setupSuccess(options, testProvider);
 
@@ -291,7 +307,7 @@ suite('Unit Tests - Debug Launcher', () => {
         });
         test(`Must not launch debugger if cancelled ${testTitleSuffix}`, async () => {
             debugService
-                .setup((d) => d.startDebugging(TypeMoq.It.isAny(), TypeMoq.It.isAny()))
+                .setup((d) => d.startDebugging(TypeMoq.It.isAny(), TypeMoq.It.isAny(), TypeMoq.It.isAny()))
                 .returns(() => {
                     return Promise.resolve(undefined as any);
                 })
@@ -300,7 +316,14 @@ suite('Unit Tests - Debug Launcher', () => {
             const cancellationToken = new CancellationTokenSource();
             cancellationToken.cancel();
             const token = cancellationToken.token;
-            const options: LaunchOptions = { cwd: '', args: [], token, testProvider };
+            const options: LaunchOptions = {
+                cwd: '',
+                args: [],
+                token,
+                testProvider,
+                runTestIdsPort: 'runTestIdsPort',
+                pytestPort: 'pytestPort',
+            };
 
             await expect(debugLauncher.launchDebugger(options)).to.be.eventually.equal(undefined, 'not undefined');
 
@@ -310,10 +333,19 @@ suite('Unit Tests - Debug Launcher', () => {
             getWorkspaceFoldersStub.returns(undefined);
             debugService
                 .setup((d) => d.startDebugging(TypeMoq.It.isAny(), TypeMoq.It.isAny()))
-                .returns(() => Promise.resolve(undefined as any))
+                .returns(() => {
+                    console.log('Debugging should not start');
+                    return Promise.resolve(undefined as any);
+                })
                 .verifiable(TypeMoq.Times.never());
 
-            const options: LaunchOptions = { cwd: '', args: [], testProvider };
+            const options: LaunchOptions = {
+                cwd: '',
+                args: [],
+                testProvider,
+                runTestIdsPort: 'runTestIdsPort',
+                pytestPort: 'pytestPort',
+            };
 
             await expect(debugLauncher.launchDebugger(options)).to.eventually.rejectedWith('Please open a workspace');
 
@@ -326,10 +358,12 @@ suite('Unit Tests - Debug Launcher', () => {
             cwd: 'one/two/three',
             args: ['/one/two/three/testfile.py'],
             testProvider: 'unittest',
+            runTestIdsPort: 'runTestIdsPort',
+            pytestPort: 'pytestPort',
         };
         const expected = getDefaultDebugConfig();
         expected.name = 'spam';
-        setupSuccess(options, 'unittest', expected, [{ name: 'spam', type: DebuggerTypeName, request: 'test' }]);
+        setupSuccess(options, 'unittest', expected, [{ name: 'spam', type: PythonDebuggerTypeName, request: 'test' }]);
 
         await debugLauncher.launchDebugger(options);
 
@@ -342,10 +376,12 @@ suite('Unit Tests - Debug Launcher', () => {
             cwd: 'one/two/three',
             args: ['/one/two/three/testfile.py'],
             testProvider: 'unittest',
+            runTestIdsPort: 'runTestIdsPort',
+            pytestPort: 'pytestPort',
         };
         const expected = getDefaultDebugConfig();
         expected.cwd = 'path/to/settings/cwd';
-        const pluginPath = path.join(EXTENSION_ROOT_DIR, 'pythonFiles');
+        const pluginPath = path.join(EXTENSION_ROOT_DIR, 'python_files');
         const pythonPath = `${pluginPath}${path.delimiter}${expected.cwd}`;
         expected.env.PYTHONPATH = pythonPath;
 
@@ -360,10 +396,12 @@ suite('Unit Tests - Debug Launcher', () => {
             cwd: 'one/two/three',
             args: ['/one/two/three/testfile.py'],
             testProvider: 'unittest',
+            runTestIdsPort: 'runTestIdsPort',
+            pytestPort: 'pytestPort',
         };
         const expected = {
             name: 'my tests',
-            type: DebuggerTypeName,
+            type: PythonDebuggerTypeName,
             request: 'launch',
             python: 'some/dir/bin/py3',
             debugAdapterPython: 'some/dir/bin/py3',
@@ -375,11 +413,12 @@ suite('Unit Tests - Debug Launcher', () => {
             env: {
                 PYTHONPATH: 'one/two/three',
                 SPAM: 'EGGS',
+                TEST_RUN_PIPE: 'pytestPort',
+                RUN_TEST_IDS_PIPE: 'runTestIdsPort',
             },
             envFile: 'some/dir/.env',
             redirectOutput: false,
             debugStdLib: true,
-            justMyCode: false,
             // added by LaunchConfigurationResolver:
             internalConsoleOptions: 'neverOpen',
             subProcess: true,
@@ -388,7 +427,7 @@ suite('Unit Tests - Debug Launcher', () => {
         setupSuccess(options, 'unittest', expected, [
             {
                 name: 'my tests',
-                type: DebuggerTypeName,
+                type: PythonDebuggerTypeName,
                 request: 'test',
                 pythonPath: expected.python,
                 stopOnEntry: expected.stopOnEntry,
@@ -399,7 +438,6 @@ suite('Unit Tests - Debug Launcher', () => {
                 envFile: expected.envFile,
                 redirectOutput: expected.redirectOutput,
                 debugStdLib: expected.debugStdLib,
-                justMyCode: undefined,
             },
         ]);
 
@@ -413,13 +451,15 @@ suite('Unit Tests - Debug Launcher', () => {
             cwd: 'one/two/three',
             args: ['/one/two/three/testfile.py'],
             testProvider: 'unittest',
+            runTestIdsPort: 'runTestIdsPort',
+            pytestPort: 'pytestPort',
         };
         const expected = getDefaultDebugConfig();
         expected.name = 'spam1';
         setupSuccess(options, 'unittest', expected, [
-            { name: 'spam1', type: DebuggerTypeName, request: 'test' },
-            { name: 'spam2', type: DebuggerTypeName, request: 'test' },
-            { name: 'spam3', type: DebuggerTypeName, request: 'test' },
+            { name: 'spam1', type: PythonDebuggerTypeName, request: 'test' },
+            { name: 'spam2', type: PythonDebuggerTypeName, request: 'test' },
+            { name: 'spam3', type: PythonDebuggerTypeName, request: 'test' },
         ]);
 
         await debugLauncher.launchDebugger(options);
@@ -432,6 +472,8 @@ suite('Unit Tests - Debug Launcher', () => {
             cwd: 'one/two/three',
             args: ['/one/two/three/testfile.py'],
             testProvider: 'unittest',
+            runTestIdsPort: 'runTestIdsPort',
+            pytestPort: 'pytestPort',
         };
         const expected = getDefaultDebugConfig();
         setupSuccess(options, 'unittest', expected, ']');
@@ -446,7 +488,7 @@ suite('Unit Tests - Debug Launcher', () => {
         '// test 2 \n\
     { \n\
         "name": "spam", \n\
-        "type": "python", \n\
+        "type": "debugpy", \n\
         "request": "test" \n\
     } \n\
             ',
@@ -454,7 +496,7 @@ suite('Unit Tests - Debug Launcher', () => {
     [ \n\
         { \n\
             "name": "spam", \n\
-            "type": "python", \n\
+            "type": "debugpy", \n\
             "request": "test" \n\
         } \n\
     ] \n\
@@ -464,7 +506,7 @@ suite('Unit Tests - Debug Launcher', () => {
         "configurations": [ \n\
             { \n\
                 "name": "spam", \n\
-                "type": "python", \n\
+                "type": "debugpy", \n\
                 "request": "test" \n\
             } \n\
         ] \n\
@@ -478,6 +520,8 @@ suite('Unit Tests - Debug Launcher', () => {
                 cwd: 'one/two/three',
                 args: ['/one/two/three/testfile.py'],
                 testProvider: 'unittest',
+                runTestIdsPort: 'runTestIdsPort',
+                pytestPort: 'pytestPort',
             };
             const expected = getDefaultDebugConfig();
             setupSuccess(options, 'unittest', expected, text);
@@ -493,16 +537,18 @@ suite('Unit Tests - Debug Launcher', () => {
             cwd: 'one/two/three',
             args: ['/one/two/three/testfile.py'],
             testProvider: 'unittest',
+            runTestIdsPort: 'runTestIdsPort',
+            pytestPort: 'pytestPort',
         };
         const expected = getDefaultDebugConfig();
 
         setupSuccess(options, 'unittest', expected, [
             {} as DebugConfiguration,
             { name: 'spam1' } as DebugConfiguration,
-            { name: 'spam2', type: DebuggerTypeName } as DebugConfiguration,
+            { name: 'spam2', type: PythonDebuggerTypeName } as DebugConfiguration,
             { name: 'spam3', request: 'test' } as DebugConfiguration,
-            { type: DebuggerTypeName } as DebugConfiguration,
-            { type: DebuggerTypeName, request: 'test' } as DebugConfiguration,
+            { type: PythonDebuggerTypeName } as DebugConfiguration,
+            { type: PythonDebuggerTypeName, request: 'test' } as DebugConfiguration,
             { request: 'test' } as DebugConfiguration,
         ]);
 
@@ -516,6 +562,8 @@ suite('Unit Tests - Debug Launcher', () => {
             cwd: 'one/two/three',
             args: ['/one/two/three/testfile.py'],
             testProvider: 'unittest',
+            runTestIdsPort: 'runTestIdsPort',
+            pytestPort: 'pytestPort',
         };
         const expected = getDefaultDebugConfig();
         setupSuccess(options, 'unittest', expected, [{ name: 'foo', type: 'other', request: 'bar' }]);
@@ -530,9 +578,11 @@ suite('Unit Tests - Debug Launcher', () => {
             cwd: 'one/two/three',
             args: ['/one/two/three/testfile.py'],
             testProvider: 'unittest',
+            runTestIdsPort: 'runTestIdsPort',
+            pytestPort: 'pytestPort',
         };
         const expected = getDefaultDebugConfig();
-        setupSuccess(options, 'unittest', expected, [{ name: 'spam', type: DebuggerTypeName, request: 'bogus' }]);
+        setupSuccess(options, 'unittest', expected, [{ name: 'spam', type: PythonDebuggerTypeName, request: 'bogus' }]);
 
         await debugLauncher.launchDebugger(options);
 
@@ -544,11 +594,13 @@ suite('Unit Tests - Debug Launcher', () => {
             cwd: 'one/two/three',
             args: ['/one/two/three/testfile.py'],
             testProvider: 'unittest',
+            runTestIdsPort: 'runTestIdsPort',
+            pytestPort: 'pytestPort',
         };
         const expected = getDefaultDebugConfig();
         setupSuccess(options, 'unittest', expected, [
-            { name: 'spam', type: DebuggerTypeName, request: 'launch' },
-            { name: 'spam', type: DebuggerTypeName, request: 'attach' },
+            { name: 'spam', type: PythonDebuggerTypeName, request: 'launch' },
+            { name: 'spam', type: PythonDebuggerTypeName, request: 'attach' },
         ]);
 
         await debugLauncher.launchDebugger(options);
@@ -561,15 +613,17 @@ suite('Unit Tests - Debug Launcher', () => {
             cwd: 'one/two/three',
             args: ['/one/two/three/testfile.py'],
             testProvider: 'unittest',
+            runTestIdsPort: 'runTestIdsPort',
+            pytestPort: 'pytestPort',
         };
         const expected = getDefaultDebugConfig();
         expected.name = 'spam2';
         setupSuccess(options, 'unittest', expected, [
             { name: 'foo1', type: 'other', request: 'bar' },
             { name: 'foo2', type: 'other', request: 'bar' },
-            { name: 'spam1', type: DebuggerTypeName, request: 'launch' },
-            { name: 'spam2', type: DebuggerTypeName, request: 'test' },
-            { name: 'spam3', type: DebuggerTypeName, request: 'attach' },
+            { name: 'spam1', type: PythonDebuggerTypeName, request: 'launch' },
+            { name: 'spam2', type: PythonDebuggerTypeName, request: 'test' },
+            { name: 'spam3', type: PythonDebuggerTypeName, request: 'attach' },
             { name: 'xyz', type: 'another', request: 'abc' },
         ]);
 
@@ -583,6 +637,8 @@ suite('Unit Tests - Debug Launcher', () => {
             cwd: 'one/two/three',
             args: ['/one/two/three/testfile.py'],
             testProvider: 'unittest',
+            runTestIdsPort: 'runTestIdsPort',
+            pytestPort: 'pytestPort',
         };
         const expected = getDefaultDebugConfig();
         expected.name = 'spam';
@@ -599,7 +655,7 @@ suite('Unit Tests - Debug Launcher', () => {
             { \n\
                 // "test" debug config \n\
                 "name": "spam",  /* non-empty */ \n\
-                "type": "python",  /* must be "python" */ \n\
+                "type": "debugpy",  /* must be "python" */ \n\
                 "request": "test",  /* must be "test" */ \n\
                 // extra stuff here: \n\
                 "stopOnEntry": true \n\

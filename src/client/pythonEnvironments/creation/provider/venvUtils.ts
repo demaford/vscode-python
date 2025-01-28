@@ -2,26 +2,40 @@
 // Licensed under the MIT License
 
 import * as tomljs from '@iarna/toml';
-import * as fs from 'fs-extra';
 import { flatten, isArray } from 'lodash';
 import * as path from 'path';
-import { CancellationToken, ProgressLocation, QuickPickItem, RelativePattern, WorkspaceFolder } from 'vscode';
+import {
+    CancellationToken,
+    ProgressLocation,
+    QuickPickItem,
+    QuickPickItemButtonEvent,
+    RelativePattern,
+    ThemeIcon,
+    Uri,
+    WorkspaceFolder,
+} from 'vscode';
+import * as fs from '../../../common/platform/fs-paths';
 import { Common, CreateEnv } from '../../../common/utils/localize';
 import {
     MultiStepAction,
     MultiStepNode,
     showQuickPickWithBack,
+    showTextDocument,
     withProgress,
 } from '../../../common/vscodeApis/windowApis';
 import { findFiles } from '../../../common/vscodeApis/workspaceApis';
 import { traceError, traceVerbose } from '../../../logging';
 import { Commands } from '../../../common/constants';
-import { isWindows } from '../../../common/platform/platformService';
+import { isWindows } from '../../../common/utils/platform';
 import { getVenvPath, hasVenv } from '../common/commonUtils';
 import { deleteEnvironmentNonWindows, deleteEnvironmentWindows } from './venvDeleteUtils';
 
+export const OPEN_REQUIREMENTS_BUTTON = {
+    iconPath: new ThemeIcon('go-to-file'),
+    tooltip: CreateEnv.Venv.openRequirementsFile,
+};
 const exclude = '**/{.venv*,.git,.nox,.tox,.conda,site-packages,__pypackages__}/**';
-async function getPipRequirementsFiles(
+export async function getPipRequirementsFiles(
     workspaceFolder: WorkspaceFolder,
     token?: CancellationToken,
 ): Promise<string[] | undefined> {
@@ -45,6 +59,10 @@ function tomlParse(content: string): tomljs.JsonMap {
 
 function tomlHasBuildSystem(toml: tomljs.JsonMap): boolean {
     return toml['build-system'] !== undefined;
+}
+
+function tomlHasProject(toml: tomljs.JsonMap): boolean {
+    return toml.project !== undefined;
 }
 
 function getTomlOptionalDeps(toml: tomljs.JsonMap): string[] {
@@ -78,8 +96,13 @@ async function pickTomlExtras(extras: string[], token?: CancellationToken): Prom
     return undefined;
 }
 
-async function pickRequirementsFiles(files: string[], token?: CancellationToken): Promise<string[] | undefined> {
+async function pickRequirementsFiles(
+    files: string[],
+    root: string,
+    token?: CancellationToken,
+): Promise<string[] | undefined> {
     const items: QuickPickItem[] = files
+        .map((p) => path.relative(root, p))
         .sort((a, b) => {
             const al: number = a.split(/[\\\/]/).length;
             const bl: number = b.split(/[\\\/]/).length;
@@ -91,7 +114,10 @@ async function pickRequirementsFiles(files: string[], token?: CancellationToken)
             }
             return al - bl;
         })
-        .map((e) => ({ label: e }));
+        .map((e) => ({
+            label: e,
+            buttons: [OPEN_REQUIREMENTS_BUTTON],
+        }));
 
     const selection = await showQuickPickWithBack(
         items,
@@ -101,6 +127,11 @@ async function pickRequirementsFiles(files: string[], token?: CancellationToken)
             canPickMany: true,
         },
         token,
+        async (e: QuickPickItemButtonEvent<QuickPickItem>) => {
+            if (e.item.label) {
+                await showTextDocument(Uri.file(path.join(root, e.item.label)));
+            }
+        },
     );
 
     if (selection && isArray(selection)) {
@@ -112,7 +143,7 @@ async function pickRequirementsFiles(files: string[], token?: CancellationToken)
 
 export function isPipInstallableToml(tomlContent: string): boolean {
     const toml = tomlParse(tomlContent);
-    return tomlHasBuildSystem(toml);
+    return tomlHasBuildSystem(toml) && tomlHasProject(toml);
 }
 
 export interface IPackageInstallSelection {
@@ -135,12 +166,17 @@ export async function pickPackagesToInstall(
 
             let extras: string[] = [];
             let hasBuildSystem = false;
+            let hasProject = false;
 
             if (await fs.pathExists(tomlPath)) {
                 const toml = tomlParse(await fs.readFile(tomlPath, 'utf-8'));
                 extras = getTomlOptionalDeps(toml);
                 hasBuildSystem = tomlHasBuildSystem(toml);
+                hasProject = tomlHasProject(toml);
 
+                if (!hasProject) {
+                    traceVerbose('Create env: Found toml without project. So we will not use editable install.');
+                }
                 if (!hasBuildSystem) {
                     traceVerbose('Create env: Found toml without build system. So we will not use editable install.');
                 }
@@ -152,7 +188,7 @@ export async function pickPackagesToInstall(
                 return MultiStepAction.Back;
             }
 
-            if (hasBuildSystem) {
+            if (hasBuildSystem && hasProject) {
                 if (extras.length > 0) {
                     traceVerbose('Create Env: Found toml with optional dependencies.');
 
@@ -195,14 +231,11 @@ export async function pickPackagesToInstall(
         tomlStep,
         async (context?: MultiStepAction) => {
             traceVerbose('Looking for pip requirements.');
-            const requirementFiles = (await getPipRequirementsFiles(workspaceFolder, token))?.map((p) =>
-                path.relative(workspaceFolder.uri.fsPath, p),
-            );
-
+            const requirementFiles = await getPipRequirementsFiles(workspaceFolder, token);
             if (requirementFiles && requirementFiles.length > 0) {
                 traceVerbose('Found pip requirements.');
                 try {
-                    const result = await pickRequirementsFiles(requirementFiles, token);
+                    const result = await pickRequirementsFiles(requirementFiles, workspaceFolder.uri.fsPath, token);
                     const installList = result?.map((p) => path.join(workspaceFolder.uri.fsPath, p));
                     if (installList) {
                         installList.forEach((i) => {
@@ -268,10 +301,13 @@ export async function pickExistingVenvAction(
     if (workspaceFolder) {
         if (await hasVenv(workspaceFolder)) {
             const items: QuickPickItem[] = [
-                { label: CreateEnv.Venv.recreate, description: CreateEnv.Venv.recreateDescription },
                 {
                     label: CreateEnv.Venv.useExisting,
                     description: CreateEnv.Venv.useExistingDescription,
+                },
+                {
+                    label: CreateEnv.Venv.recreate,
+                    description: CreateEnv.Venv.recreateDescription,
                 },
             ];
 

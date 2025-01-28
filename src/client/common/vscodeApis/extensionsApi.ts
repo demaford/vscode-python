@@ -2,8 +2,8 @@
 // Licensed under the MIT License.
 
 import * as path from 'path';
-import * as fs from 'fs-extra';
 import * as vscode from 'vscode';
+import * as fs from '../platform/fs-paths';
 import { PVSC_EXTENSION_ID } from '../constants';
 
 export function getExtension<T = unknown>(extensionId: string): vscode.Extension<T> | undefined {
@@ -31,4 +31,9 @@ export function isExtensionDisabled(extensionId: string): boolean {
 
 export function isInsider(): boolean {
     return vscode.env.appName.includes('Insider');
+}
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export function getExtensions(): readonly vscode.Extension<any>[] {
+    return vscode.extensions.all;
 }

@@ -20,7 +20,6 @@ const nativeDependencyChecker = require('node-has-native-dependencies');
 const flat = require('flat');
 const { argv } = require('yargs');
 const os = require('os');
-const rmrf = require('rimraf');
 const typescript = require('typescript');
 
 const tsProject = ts.createProject('./tsconfig.json', { typescript });
@@ -39,18 +38,19 @@ gulp.task('compileCore', (done) => {
         .on('finish', () => (failed ? done(new Error('TypeScript compilation errors')) : done()));
 });
 
-const apiTsProject = ts.createProject('./pythonExtensionApi/tsconfig.json', { typescript });
-
 gulp.task('compileApi', (done) => {
-    let failed = false;
-    apiTsProject
-        .src()
-        .pipe(apiTsProject())
-        .on('error', () => {
-            failed = true;
+    spawnAsync('npm', ['run', 'compileApi'], undefined, true)
+        .then((stdout) => {
+            if (stdout.includes('error')) {
+                done(new Error(stdout));
+            } else {
+                done();
+            }
         })
-        .js.pipe(gulp.dest('./pythonExtensionApi/out'))
-        .on('finish', () => (failed ? done(new Error('TypeScript compilation errors')) : done()));
+        .catch((ex) => {
+            console.log(ex);
+            done(new Error('TypeScript compilation errors', ex));
+        });
 });
 
 gulp.task('compile', gulp.series('compileCore', 'compileApi'));
@@ -98,7 +98,7 @@ async function addExtensionPackDependencies() {
     // extension dependencies need not be installed during development
     const packageJsonContents = await fsExtra.readFile('package.json', 'utf-8');
     const packageJson = JSON.parse(packageJsonContents);
-    packageJson.extensionPack = ['ms-python.vscode-pylance'].concat(
+    packageJson.extensionPack = ['ms-python.vscode-pylance', 'ms-python.debugpy'].concat(
         packageJson.extensionPack ? packageJson.extensionPack : [],
     );
     // Remove potential duplicates.
@@ -222,12 +222,6 @@ function getAllowedWarningsForWebPack(buildConfig) {
             throw new Error('Unknown WebPack Configuration');
     }
 }
-gulp.task('renameSourceMaps', async () => {
-    // By default source maps will be disabled in the extension.
-    // Users will need to use the command `python.enableSourceMapSupport` to enable source maps.
-    const extensionSourceMap = path.join(__dirname, 'out', 'client', 'extension.js.map');
-    await fsExtra.rename(extensionSourceMap, `${extensionSourceMap}.disabled`);
-});
 
 gulp.task('verifyBundle', async () => {
     const matches = await glob.sync(path.join(__dirname, '*.vsix'));
@@ -238,103 +232,9 @@ gulp.task('verifyBundle', async () => {
     }
 });
 
-gulp.task('prePublishBundle', gulp.series('webpack', 'renameSourceMaps'));
+gulp.task('prePublishBundle', gulp.series('webpack'));
 gulp.task('checkDependencies', gulp.series('checkNativeDependencies'));
 gulp.task('prePublishNonBundle', gulp.series('compile'));
-
-gulp.task('installPythonRequirements', async () => {
-    let args = [
-        '-m',
-        'pip',
-        '--disable-pip-version-check',
-        'install',
-        '--no-user',
-        '-t',
-        './pythonFiles/lib/python',
-        '--no-cache-dir',
-        '--implementation',
-        'py',
-        '--no-deps',
-        '--upgrade',
-        '-r',
-        './requirements.txt',
-    ];
-    await spawnAsync(process.env.CI_PYTHON_PATH || 'python', args, undefined, true)
-        .then(() => true)
-        .catch((ex) => {
-            console.error("Failed to install requirements using 'python'", ex);
-            return false;
-        });
-
-    args = [
-        '-m',
-        'pip',
-        '--disable-pip-version-check',
-        'install',
-        '--no-user',
-        '-t',
-        './pythonFiles/lib/jedilsp',
-        '--no-cache-dir',
-        '--implementation',
-        'py',
-        '--no-deps',
-        '--upgrade',
-        '-r',
-        './pythonFiles/jedilsp_requirements/requirements.txt',
-    ];
-    await spawnAsync(process.env.CI_PYTHON_PATH || 'python', args, undefined, true)
-        .then(() => true)
-        .catch((ex) => {
-            console.error("Failed to install Jedi LSP requirements using 'python'", ex);
-            return false;
-        });
-});
-
-// See https://github.com/microsoft/vscode-python/issues/7136
-gulp.task('installDebugpy', async () => {
-    // Install dependencies needed for 'install_debugpy.py'
-    const depsArgs = [
-        '-m',
-        'pip',
-        '--disable-pip-version-check',
-        'install',
-        '--no-user',
-        '-t',
-        './pythonFiles/lib/temp',
-        '-r',
-        './build/build-install-requirements.txt',
-    ];
-    await spawnAsync(process.env.CI_PYTHON_PATH || 'python', depsArgs, undefined, true)
-        .then(() => true)
-        .catch((ex) => {
-            console.error("Failed to install dependencies need by 'install_debugpy.py' using 'python'", ex);
-            return false;
-        });
-
-    // Install new DEBUGPY with wheels for python
-    const wheelsArgs = ['./pythonFiles/install_debugpy.py'];
-    const wheelsEnv = { PYTHONPATH: './pythonFiles/lib/temp' };
-    await spawnAsync(process.env.CI_PYTHON_PATH || 'python', wheelsArgs, wheelsEnv, true)
-        .then(() => true)
-        .catch((ex) => {
-            console.error("Failed to install DEBUGPY wheels using 'python'", ex);
-            return false;
-        });
-
-    // Download get-pip.py
-    const getPipArgs = ['./pythonFiles/download_get_pip.py'];
-    const getPipEnv = { PYTHONPATH: './pythonFiles/lib/temp' };
-    await spawnAsync(process.env.CI_PYTHON_PATH || 'python', getPipArgs, getPipEnv, true)
-        .then(() => true)
-        .catch((ex) => {
-            console.error("Failed to download get-pip wheels using 'python'", ex);
-            return false;
-        });
-
-    rmrf.sync('./pythonFiles/lib/temp');
-});
-
-gulp.task('installPythonLibs', gulp.series('installPythonRequirements', 'installDebugpy'));
 
 function spawnAsync(command, args, env, rejectOnStdErr = false) {
     env = env || {};
